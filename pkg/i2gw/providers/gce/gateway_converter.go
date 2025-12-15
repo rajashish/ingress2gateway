@@ -42,12 +42,12 @@ func (c *irToGatewayResourcesConverter) irToGateway(ir intermediate.IR) (i2gw.Ga
 	if len(errs) != 0 {
 		return i2gw.GatewayResources{}, errs
 	}
-	buildGceGatewayExtensions(ir, &gatewayResources)
-	buildGceServiceExtensions(ir, &gatewayResources)
+	BuildGceGatewayExtensions(ir, &gatewayResources)
+	BuildGceServiceExtensions(ir, &gatewayResources)
 	return gatewayResources, nil
 }
 
-func buildGceGatewayExtensions(ir intermediate.IR, gatewayResources *i2gw.GatewayResources) {
+func BuildGceGatewayExtensions(ir intermediate.IR, gatewayResources *i2gw.GatewayResources) {
 	for gwyKey, gatewayContext := range ir.Gateways {
 		gwyPolicy := addGatewayPolicyIfConfigured(gwyKey, gatewayContext.ProviderSpecificIR)
 		if gwyPolicy == nil {
@@ -67,7 +67,7 @@ func addGatewayPolicyIfConfigured(gatewayNamespacedName types.NamespacedName, ga
 		return nil
 	}
 	// If there is no specification related to GCPGatewayPolicy feature, return nil.
-	if gatewayIR.Gce.SslPolicy == nil {
+	if gatewayIR.Gce.SslPolicy == nil && gatewayIR.Gce.Tls == nil && gatewayIR.Gce.Logging == nil {
 		return nil
 	}
 	gcpGatewayPolicy := gkegatewayv1.GCPGatewayPolicy{
@@ -91,7 +91,7 @@ func addGatewayPolicyIfConfigured(gatewayNamespacedName types.NamespacedName, ga
 	return &gcpGatewayPolicy
 }
 
-func buildGceServiceExtensions(ir intermediate.IR, gatewayResources *i2gw.GatewayResources) {
+func BuildGceServiceExtensions(ir intermediate.IR, gatewayResources *i2gw.GatewayResources) {
 	for svcKey, serviceIR := range ir.Services {
 		bePolicy := addGCPBackendPolicyIfConfigured(svcKey, serviceIR)
 		if bePolicy != nil {
@@ -120,7 +120,7 @@ func addGCPBackendPolicyIfConfigured(serviceNamespacedName types.NamespacedName,
 		return nil
 	}
 	// If there is no specification related to GCPBackendPolicy feature, return nil.
-	if serviceIR.Gce.SessionAffinity == nil && serviceIR.Gce.SecurityPolicy == nil {
+	if serviceIR.Gce.SessionAffinity == nil && serviceIR.Gce.SecurityPolicy == nil && serviceIR.Gce.Iap == nil {
 		return nil
 	}
 
@@ -145,6 +145,9 @@ func addGCPBackendPolicyIfConfigured(serviceNamespacedName types.NamespacedName,
 	}
 	if serviceIR.Gce.SecurityPolicy != nil {
 		gcpBackendPolicy.Spec.Default.SecurityPolicy = extensions.BuildGCPBackendPolicySecurityPolicyConfig(serviceIR)
+	}
+	if serviceIR.Gce.Iap != nil {
+		gcpBackendPolicy.Spec.Default.IAP = extensions.BuildGCPBackendPolicyIapConfig(serviceIR)
 	}
 
 	return &gcpBackendPolicy

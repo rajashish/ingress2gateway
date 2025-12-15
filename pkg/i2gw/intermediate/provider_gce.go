@@ -19,15 +19,25 @@ package intermediate
 type GceGatewayIR struct {
 	EnableHTTPSRedirect bool
 	SslPolicy           *SslPolicyConfig
+	Tls                 *TlsConfig
+	Logging             *LoggingConfig
 }
 type SslPolicyConfig struct {
 	Name string
+}
+type TlsConfig struct {
+	MinVersion string
+	Profile    string
+}
+type LoggingConfig struct {
+	Enabled bool
 }
 type GceHTTPRouteIR struct{}
 type GceServiceIR struct {
 	SessionAffinity *SessionAffinityConfig
 	SecurityPolicy  *SecurityPolicyConfig
 	HealthCheck     *HealthCheckConfig
+	Iap             *IapConfig
 }
 type SessionAffinityConfig struct {
 	AffinityType string
@@ -44,6 +54,12 @@ type HealthCheckConfig struct {
 	Type               *string
 	Port               *int64
 	RequestPath        *string
+}
+type IapConfig struct {
+	Enabled      bool
+	SecretName   string
+	ClientID     string
+	ClientSecret string
 }
 
 func mergeGceGatewayIR(current, existing *GceGatewayIR) *GceGatewayIR {
