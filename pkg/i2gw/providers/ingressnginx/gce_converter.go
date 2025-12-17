@@ -64,7 +64,7 @@ func gceFeature(ingressList []networkingv1.Ingress, servicePorts map[types.Names
 								Type: gatewayv1.HTTPRouteFilterRequestRedirect,
 								RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
 									Hostname:   (*gatewayv1.PreciseHostname)(&target),
-									StatusCode: ptrToInt(308),
+									StatusCode: ptrToInt(301),
 								},
 							}
 							route.Spec.Rules[i].Filters = append(route.Spec.Rules[i].Filters, filter)
@@ -204,7 +204,6 @@ func ensureHTTPSListener(ir *intermediate.IR, parentRefs []gatewayv1.ParentRefer
 				if !hasHTTPS {
 					// Add HTTPS listener
 					gw := gwCtx.Gateway
-					h := gatewayv1.Hostname("*") // Default to wildcard if we don't know
 					// In a real scenario, we might want to pick the host from the Ingress/Route.
 					// But for a generic HTTPS listener addition:
 					mode := gatewayv1.TLSModeTerminate
@@ -212,11 +211,13 @@ func ensureHTTPSListener(ir *intermediate.IR, parentRefs []gatewayv1.ParentRefer
 						Name:     "https-generated",
 						Port:     443,
 						Protocol: gatewayv1.HTTPSProtocolType,
-						Hostname: &h,
 						TLS: &gatewayv1.ListenerTLSConfig{
 							Mode: &mode,
-							// We don't have a cert here.
-							// User manual step implies they might add it or use GKE managed certs.
+							CertificateRefs: []gatewayv1.SecretObjectReference{
+								{
+									Name: "placeholder-secret",
+								},
+							},
 						},
 					}
 					gw.Spec.Listeners = append(gw.Spec.Listeners, listener)
