@@ -26,7 +26,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-func TestGkeFeature(t *testing.T) {
+func TestGceFeature(t *testing.T) {
 	ingressClass := "nginx"
 	ingress := networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
@@ -110,9 +110,9 @@ func TestGkeFeature(t *testing.T) {
 		},
 	}
 
-	errs := gkeFeature([]networkingv1.Ingress{ingress}, nil, &ir)
+	errs := gceFeature([]networkingv1.Ingress{ingress}, nil, &ir)
 	if len(errs) > 0 {
-		t.Fatalf("gkeFeature returned errors: %v", errs)
+		t.Fatalf("gceFeature returned errors: %v", errs)
 	}
 
 	// Verify Service IR (GCPBackendPolicy)

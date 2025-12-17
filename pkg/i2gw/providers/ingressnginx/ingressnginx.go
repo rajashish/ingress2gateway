@@ -42,7 +42,7 @@ func init() {
 	})
 	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
 		Name:         "output-to",
-		Description:  "The target implementation to generate resources for. Options: 'gateway-api' (default), 'gke'.",
+		Description:  "The target implementation to generate resources for. Options: 'gateway-api' (default), 'gce'.",
 		DefaultValue: "gateway-api",
 	})
 }
@@ -83,7 +83,7 @@ func (p *Provider) ToGatewayResources(ir intermediate.IR) (i2gw.GatewayResources
 		return i2gw.GatewayResources{}, errs
 	}
 
-	if p.outputTo == "gke" {
+	if p.outputTo == "gce" {
 		gce.BuildGceGatewayExtensions(ir, &gatewayResources)
 		gce.BuildGceServiceExtensions(ir, &gatewayResources)
 	}

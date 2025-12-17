@@ -29,7 +29,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-func gkeFeature(ingressList []networkingv1.Ingress, servicePorts map[types.NamespacedName]map[string]int32, ir *intermediate.IR) field.ErrorList {
+func gceFeature(ingressList []networkingv1.Ingress, servicePorts map[types.NamespacedName]map[string]int32, ir *intermediate.IR) field.ErrorList {
 	var errs field.ErrorList
 
 	// Process Services (GCPBackendPolicy)
@@ -55,7 +55,7 @@ func gkeFeature(ingressList []networkingv1.Ingress, servicePorts map[types.Names
 							h := string(host)
 							var target string
 							if strings.HasPrefix(h, "www.") {
-								target = strings.TrimPrefix(h, "www.")
+									target = strings.TrimPrefix(h, "www.")
 							} else {
 								target = "www." + h
 							}
@@ -194,7 +194,7 @@ func ensureHTTPSListener(ir *intermediate.IR, parentRefs []gatewayv1.ParentRefer
 		for key, gwCtx := range ir.Gateways {
 			if key.Name == gwName {
 				// Found Gateway
-				hasHTTPS := false
+			hasHTTPS := false
 				for _, l := range gwCtx.Gateway.Spec.Listeners {
 					if l.Port == 443 {
 						hasHTTPS = true
@@ -258,9 +258,21 @@ func processServiceAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR
 		// 1. Rate Limiting / Security Policy (Cloud Armor)
 		// annotations: whitelist-source-range, denylist-source-range, limit-rps
 		if val, ok := ingress.Annotations["nginx.ingress.kubernetes.io/whitelist-source-range"]; ok && val != "" {
-			serviceIR.Gce.SecurityPolicy = &intermediate.SecurityPolicyConfig{Name: "manual-cloud-armor-policy-required-whitelist"}
+			policyName := "whitelist-" + svcName
+			serviceIR.Gce.SecurityPolicy = &intermediate.SecurityPolicyConfig{
+				Name: policyName,
+				CreationCommand: "gcloud compute security-policies create " + policyName + " --description \"Generated from ingress2gateway\"; " + 
+					"gcloud compute security-policies rules create 1000 --security-policy " + policyName + " --action allow --src-ip-ranges \"" + val + `\"; ` + 
+					"gcloud compute security-policies rules update 2147483647 --security-policy " + policyName + " --action deny-403",
+			}
 		} else if val, ok := ingress.Annotations["nginx.ingress.kubernetes.io/denylist-source-range"]; ok && val != "" {
-			serviceIR.Gce.SecurityPolicy = &intermediate.SecurityPolicyConfig{Name: "manual-cloud-armor-policy-required-denylist"}
+			policyName := "denylist-" + svcName
+			serviceIR.Gce.SecurityPolicy = &intermediate.SecurityPolicyConfig{
+				Name: policyName,
+				CreationCommand: "gcloud compute security-policies create " + policyName + " --description \"Generated from ingress2gateway\"; " + 
+					"gcloud compute security-policies rules create 1000 --security-policy " + policyName + " --action deny-403 --src-ip-ranges \"" + val + `\"; ` + 
+					"gcloud compute security-policies rules update 2147483647 --security-policy " + policyName + " --action allow",
+			}
 		} else if val, ok := ingress.Annotations["nginx.ingress.kubernetes.io/limit-rps"]; ok && val != "" {
 			serviceIR.Gce.SecurityPolicy = &intermediate.SecurityPolicyConfig{Name: "manual-cloud-armor-policy-required-ratelimit"}
 		}
@@ -271,8 +283,7 @@ func processServiceAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR
 			if serviceIR.Gce.Iap == nil {
 				serviceIR.Gce.Iap = &intermediate.IapConfig{}
 			}
-			serviceIR.Gce.Iap.
-				Enabled = true
+			serviceIR.Gce.Iap.Enabled = true
 			serviceIR.Gce.Iap.SecretName = secret
 		}
 

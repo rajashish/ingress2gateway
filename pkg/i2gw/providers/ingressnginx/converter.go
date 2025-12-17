@@ -33,8 +33,8 @@ func newResourcesToIRConverter(outputTo string) *resourcesToIRConverter {
 	featureParsers := []i2gw.FeatureParser{
 		canaryFeature,
 	}
-	if outputTo == "gke" {
-		featureParsers = append(featureParsers, gkeFeature)
+	if outputTo == "gce" {
+		featureParsers = append(featureParsers, gceFeature)
 	}
 	return &resourcesToIRConverter{
 		featureParsers: featureParsers,

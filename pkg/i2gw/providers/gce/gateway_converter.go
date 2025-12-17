@@ -145,6 +145,12 @@ func addGCPBackendPolicyIfConfigured(serviceNamespacedName types.NamespacedName,
 	}
 	if serviceIR.Gce.SecurityPolicy != nil {
 		gcpBackendPolicy.Spec.Default.SecurityPolicy = extensions.BuildGCPBackendPolicySecurityPolicyConfig(serviceIR)
+		if serviceIR.Gce.SecurityPolicy.CreationCommand != "" {
+			if gcpBackendPolicy.Annotations == nil {
+				gcpBackendPolicy.Annotations = make(map[string]string)
+			}
+			gcpBackendPolicy.Annotations["ingress2gateway.networking.gke.io/suggested-cloud-armor-command"] = serviceIR.Gce.SecurityPolicy.CreationCommand
+		}
 	}
 	if serviceIR.Gce.Iap != nil {
 		gcpBackendPolicy.Spec.Default.IAP = extensions.BuildGCPBackendPolicyIapConfig(serviceIR)

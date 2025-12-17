@@ -44,7 +44,8 @@ type SessionAffinityConfig struct {
 	CookieTTLSec *int64
 }
 type SecurityPolicyConfig struct {
-	Name string
+	Name            string
+	CreationCommand string
 }
 type HealthCheckConfig struct {
 	CheckIntervalSec   *int64
