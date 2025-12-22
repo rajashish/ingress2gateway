@@ -17,6 +17,9 @@ limitations under the License.
 package gce
 
 import (
+	"fmt"
+	"os"
+
 	gkegatewayv1 "github.com/GoogleCloudPlatform/gke-gateway-api/apis/networking/v1"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/intermediate"
@@ -146,10 +149,7 @@ func addGCPBackendPolicyIfConfigured(serviceNamespacedName types.NamespacedName,
 	if serviceIR.Gce.SecurityPolicy != nil {
 		gcpBackendPolicy.Spec.Default.SecurityPolicy = extensions.BuildGCPBackendPolicySecurityPolicyConfig(serviceIR)
 		if serviceIR.Gce.SecurityPolicy.CreationCommand != "" {
-			if gcpBackendPolicy.Annotations == nil {
-				gcpBackendPolicy.Annotations = make(map[string]string)
-			}
-			gcpBackendPolicy.Annotations["ingress2gateway.networking.gke.io/suggested-cloud-armor-command"] = serviceIR.Gce.SecurityPolicy.CreationCommand
+			fmt.Fprintf(os.Stderr, "# Suggested Cloud Armor policy creation command for service %s/%s:\n%s\n\n", serviceNamespacedName.Namespace, serviceNamespacedName.Name, serviceIR.Gce.SecurityPolicy.CreationCommand)
 		}
 	}
 	if serviceIR.Gce.Iap != nil {
