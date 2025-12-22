@@ -200,6 +200,12 @@ func TestGceFeature_Redirects(t *testing.T) {
 					},
 				},
 			},
+			TLS: []networkingv1.IngressTLS{
+				{
+					Hosts:      []string{"example.com"},
+					SecretName: "placeholder-secret",
+				},
+			},
 		},
 	}
 
