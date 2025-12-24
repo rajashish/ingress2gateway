@@ -28,13 +28,15 @@ type GceServiceIR struct {
 	SessionAffinity *SessionAffinityConfig
 	SecurityPolicy  *SecurityPolicyConfig
 	HealthCheck     *HealthCheckConfig
+	Iap             *IapConfig
 }
 type SessionAffinityConfig struct {
 	AffinityType string
 	CookieTTLSec *int64
 }
 type SecurityPolicyConfig struct {
-	Name string
+	Name            string
+	CreationCommand string
 }
 type HealthCheckConfig struct {
 	CheckIntervalSec   *int64
@@ -44,6 +46,10 @@ type HealthCheckConfig struct {
 	Type               *string
 	Port               *int64
 	RequestPath        *string
+}
+type IapConfig struct {
+	Enabled    bool
+	SecretName string
 }
 
 func mergeGceGatewayIR(current, existing *GceGatewayIR) *GceGatewayIR {
