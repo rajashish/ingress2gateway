@@ -18,6 +18,7 @@ package ingressnginx
 
 import (
 	"testing"
+	"strings"
 
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/intermediate"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -310,5 +311,119 @@ func TestGceFeature_Timeouts_Filters_BackendProtocol(t *testing.T) {
 	}
 	if !foundVHost {
 		t.Error("Upstream VHost filter not found")
+	}
+}
+
+func TestGceFeature_Policies(t *testing.T) {
+	ingressClass := "nginx"
+	ingress := networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "policy-ingress",
+			Namespace: "default",
+			Annotations: map[string]string{
+				"nginx.ingress.kubernetes.io/whitelist-source-range": "10.0.0.0/24",
+				"nginx.ingress.kubernetes.io/auth-secret":            "my-iap-secret",
+				"nginx.ingress.kubernetes.io/affinity":               "cookie",
+				"nginx.ingress.kubernetes.io/ssl-ciphers":            "ECDHE-RSA-AES128-GCM-SHA256",
+			},
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &ingressClass,
+			Rules: []networkingv1.IngressRule{
+				{
+					Host: "example.com",
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path: "/",
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "policy-service",
+											Port: networkingv1.ServiceBackendPort{Number: 80},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	
+	ir := intermediate.IR{
+		Services: map[types.NamespacedName]intermediate.ProviderSpecificServiceIR{
+			{Namespace: "default", Name: "policy-service"}: {},
+		},
+		Gateways: map[types.NamespacedName]intermediate.GatewayContext{
+			{Namespace: "default", Name: "nginx"}: {
+				Gateway: gatewayv1.Gateway{
+					Spec: gatewayv1.GatewaySpec{
+						GatewayClassName: "nginx",
+					},
+				},
+			},
+		},
+		HTTPRoutes: map[types.NamespacedName]intermediate.HTTPRouteContext{
+			{Namespace: "default", Name: "policy-route"}: {
+				HTTPRoute: gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "policy-route",
+						Namespace: "default",
+					},
+					Spec: gatewayv1.HTTPRouteSpec{
+						Rules: []gatewayv1.HTTPRouteRule{
+							{
+								BackendRefs: []gatewayv1.HTTPBackendRef{
+									{
+										BackendRef: gatewayv1.BackendRef{
+											BackendObjectReference: gatewayv1.BackendObjectReference{
+												Name: "policy-service",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				RuleBackendSources: [][]intermediate.BackendSource{
+					{{Ingress: &ingress}},
+				},
+			},
+		},
+	}
+
+	errs := gceFeature([]networkingv1.Ingress{ingress}, nil, &ir)
+	if len(errs) > 0 {
+		t.Fatalf("gceFeature returned errors: %v", errs)
+	}
+
+	// Verify Service IR (Cloud Armor, IAP, Affinity)
+	svcIR := ir.Services[types.NamespacedName{Namespace: "default", Name: "policy-service"}]
+	if svcIR.Gce == nil {
+		t.Fatal("Service IR Gce is nil")
+	}
+	
+	// Cloud Armor
+	if svcIR.Gce.SecurityPolicy == nil || !strings.Contains(svcIR.Gce.SecurityPolicy.Name, "whitelist-policy-service") {
+		t.Errorf("SecurityPolicy missing or name mismatch: got %v", svcIR.Gce.SecurityPolicy)
+	}
+
+	// IAP
+	if svcIR.Gce.Iap == nil || !svcIR.Gce.Iap.Enabled || svcIR.Gce.Iap.SecretName != "my-iap-secret" {
+		t.Errorf("IAP config mismatch: %+v", svcIR.Gce.Iap)
+	}
+
+	// Affinity
+	if svcIR.Gce.SessionAffinity == nil || svcIR.Gce.SessionAffinity.AffinityType != "GENERATED_COOKIE" {
+		t.Errorf("SessionAffinity config mismatch: %+v", svcIR.Gce.SessionAffinity)
+	}
+
+	// Verify Gateway IR (SSL Policy)
+	gwIR := ir.Gateways[types.NamespacedName{Namespace: "default", Name: "nginx"}]
+	if gwIR.ProviderSpecificIR.Gce == nil || gwIR.ProviderSpecificIR.Gce.SslPolicy == nil || gwIR.ProviderSpecificIR.Gce.SslPolicy.Name != "manual-ssl-policy-required" {
+		t.Errorf("Gateway SSL Policy mismatch: got %v", gwIR.ProviderSpecificIR.Gce)
 	}
 }
