@@ -30,13 +30,19 @@ import (
 const Name = "ingress-nginx"
 const NginxIngressClass = "nginx"
 const NginxIngressClassFlag = "ingress-class"
+const OutputToFlag = "output-to"
 
 func init() {
 	i2gw.ProviderConstructorByName[Name] = NewProvider
 	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
-		Name:         "ingress-class",
+		Name:         NginxIngressClassFlag,
 		Description:  "The name of the ingress class to select. Defaults to 'nginx'",
 		DefaultValue: NginxIngressClass,
+	})
+	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
+		Name:         OutputToFlag,
+		Description:  "The target output provider for annotation conversion (e.g., 'gce').",
+		DefaultValue: "",
 	})
 }
 
@@ -52,7 +58,7 @@ func NewProvider(conf *i2gw.ProviderConf) i2gw.Provider {
 	return &Provider{
 		storage:                newResourcesStorage(),
 		resourceReader:         newResourceReader(conf),
-		resourcesToIRConverter: newResourcesToIRConverter(),
+		resourcesToIRConverter: newResourcesToIRConverter(conf),
 	}
 }
 
