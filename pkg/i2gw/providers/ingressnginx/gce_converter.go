@@ -53,7 +53,7 @@ func gceFeature(ingressList []networkingv1.Ingress, servicePorts map[types.Names
 
 	// Process Services (GCPBackendPolicy)
 	for _, ingress := range ingressList {
-		processServiceAnnotations(ingress, ir)
+		processServiceAnnotations(ingress, servicePorts, ir)
 	}
 
 	// Process Gateway Annotations (None explicitly, but SSL Redirect affects Gateways indirectly via route requirements, actually it updates Gateway Listeners)
@@ -100,7 +100,7 @@ func gceFeature(ingressList []networkingv1.Ingress, servicePorts map[types.Names
 	return errs
 }
 
-func processServiceAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR) {
+func processServiceAnnotations(ingress networkingv1.Ingress, servicePorts map[types.NamespacedName]map[string]int32, ir *intermediate.IR) {
 	services := getReferencedServices(ingress)
 
 	for _, svcName := range services {
@@ -116,11 +116,39 @@ func processServiceAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR
 		// Backend Protocol
 		// annotations: backend-protocol
 		if val, ok := ingress.Annotations[annotationBackendProtocol]; ok && val == backendProtocolHTTPS {
+			serviceIR.Gce.AppProtocol = &val
+
+			// Also set HealthCheck Type as per upstream changes
 			if serviceIR.Gce.HealthCheck == nil {
 				serviceIR.Gce.HealthCheck = &intermediate.HealthCheckConfig{}
 			}
 			t := backendProtocolHTTPS
 			serviceIR.Gce.HealthCheck.Type = &t
+
+			if serviceIR.Gce.ServicePorts == nil {
+				serviceIR.Gce.ServicePorts = make(map[string]int32)
+			}
+			if ports, ok := servicePorts[svcKey]; ok {
+				for name, port := range ports {
+					serviceIR.Gce.ServicePorts[name] = port
+				}
+			} else {
+				// Fallback: try to find ports in the Ingress itself
+				extracted := getPortsForService(ingress, svcName)
+				for _, p := range extracted {
+					// Check if already exists
+					found := false
+					for _, existing := range serviceIR.Gce.ServicePorts {
+						if existing == p {
+							found = true
+							break
+						}
+					}
+					if !found {
+						serviceIR.Gce.ServicePorts[fmt.Sprintf("port-%d", p)] = p
+					}
+				}
+			}
 		}
 
 		ir.Services[svcKey] = serviceIR
@@ -415,5 +443,28 @@ func applyRedirect(url string, statusCode int, rule *gatewayv1.HTTPRouteRule) {
 		}
 	}
 	rule.Filters = append(rule.Filters, filter)
+}
+
+func getPortsForService(ingress networkingv1.Ingress, serviceName string) []int32 {
+	var ports []int32
+	if ingress.Spec.DefaultBackend != nil && ingress.Spec.DefaultBackend.Service != nil {
+		if ingress.Spec.DefaultBackend.Service.Name == serviceName {
+			if ingress.Spec.DefaultBackend.Service.Port.Number > 0 {
+				ports = append(ports, ingress.Spec.DefaultBackend.Service.Port.Number)
+			}
+		}
+	}
+	for _, rule := range ingress.Spec.Rules {
+		if rule.HTTP != nil {
+			for _, path := range rule.HTTP.Paths {
+				if path.Backend.Service != nil && path.Backend.Service.Name == serviceName {
+					if path.Backend.Service.Port.Number > 0 {
+						ports = append(ports, path.Backend.Service.Port.Number)
+					}
+				}
+			}
+		}
+	}
+	return ports
 }
 
