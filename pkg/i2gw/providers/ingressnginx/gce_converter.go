@@ -68,7 +68,7 @@ func gceFeature(ingressList []networkingv1.Ingress, servicePorts map[types.Names
 
 	// Process Services (GCPBackendPolicy)
 	for _, ingress := range ingressList {
-		processServiceAnnotations(ingress, ir)
+		processServiceAnnotations(ingress, ir, servicePorts)
 		processGatewayAnnotations(ingress, ir)
 	}
 
@@ -104,15 +104,94 @@ func gceFeature(ingressList []networkingv1.Ingress, servicePorts map[types.Names
 							route.Spec.Rules[i].Filters = append(route.Spec.Rules[i].Filters, filter)
 						}
 					}
+
+					// Handle Regex Path Matching
+					if val, ok := source.Ingress.Annotations["nginx.ingress.kubernetes.io/use-regex"]; ok && val == "true" {
+						for j := range route.Spec.Rules[i].Matches {
+							if route.Spec.Rules[i].Matches[j].Path != nil {
+								t := gatewayv1.PathMatchRegularExpression
+								route.Spec.Rules[i].Matches[j].Path.Type = &t
+							}
+						}
+					}
 				}
 			}
 		}
+		
+		// Process CORS (Route Level)
+		// We check the first source ingress for CORS annotations
+		if len(route.RuleBackendSources) > 0 && len(route.RuleBackendSources[0]) > 0 {
+			source := route.RuleBackendSources[0][0].Ingress
+			if source != nil {
+				processCorsAnnotations(source, &route, name)
+			}
+		}
+
 		ir.HTTPRoutes[name] = route
 	}
 
 	processSSLRedirects(ir)
 
 	return errs
+}
+
+func processCorsAnnotations(ingress *networkingv1.Ingress, route *intermediate.HTTPRouteContext, routeName types.NamespacedName) {
+	enableCors := ingress.Annotations["nginx.ingress.kubernetes.io/enable-cors"]
+	if enableCors != "true" {
+		return
+	}
+
+	allowOrigin := ingress.Annotations["nginx.ingress.kubernetes.io/cors-allow-origin"]
+	allowHeaders := ingress.Annotations["nginx.ingress.kubernetes.io/cors-allow-headers"]
+	allowMethods := ingress.Annotations["nginx.ingress.kubernetes.io/cors-allow-methods"]
+	allowCredentials := ingress.Annotations["nginx.ingress.kubernetes.io/cors-allow-credentials"]
+
+	corsFilter := gatewayv1.HTTPRouteFilter{
+		Type: gatewayv1.HTTPRouteFilterCORS,
+		CORS: &gatewayv1.HTTPCORSFilter{},
+	}
+
+	// Allow Origins
+	if allowOrigin != "" {
+		origins := strings.Split(allowOrigin, ",")
+		for _, o := range origins {
+			o = strings.TrimSpace(o)
+			corsFilter.CORS.AllowOrigins = append(corsFilter.CORS.AllowOrigins, gatewayv1.CORSOrigin(o))
+		}
+	} else {
+		// Default to "*" if not specified
+		corsFilter.CORS.AllowOrigins = []gatewayv1.CORSOrigin{"*"}
+	}
+
+	// Allow Methods
+	if allowMethods != "" {
+		methods := strings.Split(allowMethods, ",")
+		for _, m := range methods {
+			corsFilter.CORS.AllowMethods = append(corsFilter.CORS.AllowMethods, gatewayv1.HTTPMethodWithWildcard(strings.TrimSpace(m)))
+		}
+	} else {
+		// Nginx default methods
+		corsFilter.CORS.AllowMethods = []gatewayv1.HTTPMethodWithWildcard{"GET", "PUT", "POST", "DELETE", "PATCH", "OPTIONS", "HEAD"}
+	}
+
+	// Allow Headers
+	if allowHeaders != "" {
+		headers := strings.Split(allowHeaders, ",")
+		for _, h := range headers {
+			corsFilter.CORS.AllowHeaders = append(corsFilter.CORS.AllowHeaders, gatewayv1.HTTPHeaderName(strings.TrimSpace(h)))
+		}
+	}
+
+	// Allow Credentials
+	if allowCredentials == "true" {
+		t := true
+		corsFilter.CORS.AllowCredentials = &t
+	}
+
+	// Add filter to all rules
+	for i := range route.HTTPRoute.Spec.Rules {
+		route.HTTPRoute.Spec.Rules[i].Filters = append(route.HTTPRoute.Spec.Rules[i].Filters, corsFilter)
+	}
 }
 
 func processSSLRedirects(ir *intermediate.IR) {
@@ -283,7 +362,7 @@ func ensureHTTPSListener(ir *intermediate.IR, parentRefs []gatewayv1.ParentRefer
 
 
 
-func processServiceAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR) {
+func processServiceAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR, servicePorts map[types.NamespacedName]map[string]int32) {
 	// Helper to find services referenced by this ingress
 	services := getReferencedServices(ingress)
 
@@ -303,16 +382,16 @@ func processServiceAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR
 			policyName := "whitelist-" + svcName
 			serviceIR.Gce.SecurityPolicy = &intermediate.SecurityPolicyConfig{
 				Name: policyName,
-				CreationCommand: "gcloud compute security-policies create " + policyName + " --description \"Generated from ingress2gateway\"; " +
-					"gcloud compute security-policies rules create 1000 --security-policy " + policyName + " --action allow --src-ip-ranges \"" + val + `\"; ` +
+				CreationCommand: "gcloud compute security-policies create " + policyName + " --description \"Generated from ingress2gateway\"; " + 
+					"gcloud compute security-policies rules create 1000 --security-policy " + policyName + " --action allow --src-ip-ranges \"" + val + `\"; ` + 
 					"gcloud compute security-policies rules update 2147483647 --security-policy " + policyName + " --action deny-403",
 			}
 		} else if val, ok := ingress.Annotations[annotationDenylistSourceRange]; ok && val != "" {
 			policyName := "denylist-" + svcName
 			serviceIR.Gce.SecurityPolicy = &intermediate.SecurityPolicyConfig{
 				Name: policyName,
-				CreationCommand: "gcloud compute security-policies create " + policyName + " --description \"Generated from ingress2gateway\"; " +
-					"gcloud compute security-policies rules create 1000 --security-policy " + policyName + " --action deny-403 --src-ip-ranges \"" + val + `\"; ` +
+				CreationCommand: "gcloud compute security-policies create " + policyName + " --description \"Generated from ingress2gateway\"; " + 
+					"gcloud compute security-policies rules create 1000 --security-policy " + policyName + " --action deny-403 --src-ip-ranges \"" + val + `\"; ` + 
 					"gcloud compute security-policies rules update 2147483647 --security-policy " + policyName + " --action allow",
 			}
 		} else if val, ok := ingress.Annotations[annotationLimitRPS]; ok && val != "" {
@@ -343,22 +422,59 @@ func processServiceAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR
 				}
 			}
 
-			// affinity-mode (placeholder for now as GKE usually defaults to balanced or client ip is distinct)
+			// affinity-mode
 			if mode, ok := ingress.Annotations[annotationAffinityMode]; ok && mode != "" {
-				// If mode is 'balanced' or 'persistent', could map here if IR supported it.
-				// For now, we acknowledge it was parsed if needed.
+				var policy string
+				switch mode {
+				case "balanced":
+					policy = "ROUND_ROBIN"
+				case "persistent":
+					policy = "MAGLEV"
+				}
+				if policy != "" {
+					serviceIR.Gce.LocalityLbPolicy = &policy
+				}
 			}
 		}
 
 		// 4. Backend Protocol
 		// annotations: backend-protocol
 		if val, ok := ingress.Annotations[annotationBackendProtocol]; ok && val == backendProtocolHTTPS {
+			serviceIR.Gce.AppProtocol = &val
+			
+			// Also set HealthCheck Type as per upstream changes
 			if serviceIR.Gce.HealthCheck == nil {
 				serviceIR.Gce.HealthCheck = &intermediate.HealthCheckConfig{}
 			}
 			t := backendProtocolHTTPS
 			serviceIR.Gce.HealthCheck.Type = &t
+
+			if serviceIR.Gce.ServicePorts == nil {
+				serviceIR.Gce.ServicePorts = make(map[string]int32)
+			}
+			if ports, ok := servicePorts[svcKey]; ok {
+				for name, port := range ports {
+					serviceIR.Gce.ServicePorts[name] = port
+				}
+			} else {
+				// Fallback: try to find ports in the Ingress itself
+				extracted := getPortsForService(ingress, svcName)
+				for _, p := range extracted {
+					// Check if already exists
+					found := false
+					for _, existing := range serviceIR.Gce.ServicePorts {
+						if existing == p {
+							found = true
+							break
+						}
+					}
+					if !found {
+						serviceIR.Gce.ServicePorts[fmt.Sprintf("port-%d", p)] = p
+					}
+				}
+			}
 		}
+
 
 		// 5. External Auth (auth-url)
 		// annotations: auth-url
@@ -368,6 +484,21 @@ func processServiceAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR
 			if serviceIR.Gce.SecurityPolicy == nil {
 				serviceIR.Gce.SecurityPolicy = &intermediate.SecurityPolicyConfig{Name: policyManualExternalAuth}
 			}
+		}
+
+		// 6. Backend TLS
+		// annotations: proxy-ssl-verify, proxy-ssl-secret
+		if val, ok := ingress.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-verify"]; ok && val == "on" {
+			if serviceIR.Gce.Tls == nil {
+				serviceIR.Gce.Tls = &intermediate.BackendTlsConfig{}
+			}
+			serviceIR.Gce.Tls.Mode = "Secure"
+		}
+		if val, ok := ingress.Annotations["nginx.ingress.kubernetes.io/proxy-ssl-secret"]; ok && val != "" {
+			if serviceIR.Gce.Tls == nil {
+				serviceIR.Gce.Tls = &intermediate.BackendTlsConfig{}
+			}
+			serviceIR.Gce.Tls.SecretName = val
 		}
 
 		ir.Services[svcKey] = serviceIR
@@ -403,7 +534,10 @@ func processGatewayAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR
 
 		// Let's look at ir.Gateways.
 		for name, gw := range ir.Gateways {
-			if string(gw.Spec.GatewayClassName) == *ingressClass {
+			if name.Name == *ingressClass || string(gw.Spec.GatewayClassName) == *ingressClass {
+				// Update GatewayClassName to GKE L7
+				gw.Spec.GatewayClassName = gatewayv1.ObjectName("gke-l7-global-external-managed")
+
 				// Found a candidate Gateway.
 				// Check annotations.
 				if val, ok := ingress.Annotations[annotationSSLCiphers]; ok && val != "" {
@@ -419,7 +553,6 @@ func processGatewayAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR
 						gw.ProviderSpecificIR.Gce = &intermediate.GceGatewayIR{}
 					}
 					gw.ProviderSpecificIR.Gce.EnableHTTPSRedirect = true
-					ir.Gateways[name] = gw
 				}
 				// force-ssl-redirect
 				if val, ok := ingress.Annotations[annotationForceSSLRedirect]; ok && val == "true" {
@@ -427,8 +560,8 @@ func processGatewayAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR
 						gw.ProviderSpecificIR.Gce = &intermediate.GceGatewayIR{}
 					}
 					gw.ProviderSpecificIR.Gce.EnableHTTPSRedirect = true
-					ir.Gateways[name] = gw
 				}
+				ir.Gateways[name] = gw
 			}
 		}
 	}
@@ -443,7 +576,7 @@ func processRouteAnnotations(ingress *networkingv1.Ingress, rule *gatewayv1.HTTP
 				rule.Timeouts = &gatewayv1.HTTPRouteTimeouts{}
 			}
 			gwDuration := gatewayv1.Duration(duration.String())
-			rule.Timeouts.Request = &gwDuration
+			rule.Timeouts.BackendRequest = &gwDuration
 		} else {
 			fmt.Fprintf(os.Stderr, "Warning: failed to parse proxy-read-timeout %q: %v\n", val, err)
 		}
@@ -562,4 +695,29 @@ func getReferencedServices(ingress networkingv1.Ingress) []string {
 	return services
 }
 
+func getPortsForService(ingress networkingv1.Ingress, serviceName string) []int32 {
+	var ports []int32
+	if ingress.Spec.DefaultBackend != nil && ingress.Spec.DefaultBackend.Service != nil {
+		if ingress.Spec.DefaultBackend.Service.Name == serviceName {
+			if ingress.Spec.DefaultBackend.Service.Port.Number > 0 {
+				ports = append(ports, ingress.Spec.DefaultBackend.Service.Port.Number)
+			}
+		}
+	}
+	for _, rule := range ingress.Spec.Rules {
+		if rule.HTTP != nil {
+			for _, path := range rule.HTTP.Paths {
+				if path.Backend.Service != nil && path.Backend.Service.Name == serviceName {
+					if path.Backend.Service.Port.Number > 0 {
+						ports = append(ports, path.Backend.Service.Port.Number)
+					}
+				}
+			}
+		}
+	}
+	return ports
+}
 
+func ptrToInt(i int) *int {
+	return &i
+}

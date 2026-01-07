@@ -55,6 +55,24 @@ func BuildGCPBackendPolicyIapConfig(serviceIR intermediate.ProviderSpecificServi
 	return iapConfig
 }
 
+func BuildGCPBackendPolicyTlsConfig(serviceIR intermediate.ProviderSpecificServiceIR) *GCPBackendPolicyTLS {
+	if serviceIR.Gce.Tls == nil {
+		return nil
+	}
+	config := &GCPBackendPolicyTLS{}
+	if serviceIR.Gce.Tls.Mode != "" {
+		config.Mode = &serviceIR.Gce.Tls.Mode
+	}
+	if serviceIR.Gce.Tls.SecretName != "" {
+		config.CAResult = &GCPBackendPolicyCAResult{
+			SecretRef: &SecretReference{
+				Name: serviceIR.Gce.Tls.SecretName,
+			},
+		}
+	}
+	return config
+}
+
 func BuildGCPGatewayPolicySecurityPolicyConfig(gatewayIR intermediate.ProviderSpecificGatewayIR) string {
 	return gatewayIR.Gce.SslPolicy.Name
 }

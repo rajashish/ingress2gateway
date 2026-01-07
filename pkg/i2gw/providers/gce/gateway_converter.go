@@ -26,7 +26,9 @@ import (
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/notifications"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/providers/common"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/providers/gce/extensions"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -47,6 +49,7 @@ func (c *irToGatewayResourcesConverter) irToGateway(ir intermediate.IR) (i2gw.Ga
 	}
 	BuildGceGatewayExtensions(ir, &gatewayResources)
 	BuildGceServiceExtensions(ir, &gatewayResources)
+	BuildGceRouteExtensions(ir, &gatewayResources)
 	return gatewayResources, nil
 }
 
@@ -106,6 +109,16 @@ func BuildGceServiceExtensions(ir intermediate.IR, gatewayResources *i2gw.Gatewa
 			gatewayResources.GatewayExtensions = append(gatewayResources.GatewayExtensions, *obj)
 		}
 
+		tlsPolicy := addBackendTLSPolicyIfConfigured(svcKey, serviceIR)
+		if tlsPolicy != nil {
+			obj, err := i2gw.CastToUnstructured(tlsPolicy)
+			if err != nil {
+				notify(notifications.ErrorNotification, "Failed to cast BackendTLSPolicy to unstructured", tlsPolicy)
+				continue
+			}
+			gatewayResources.GatewayExtensions = append(gatewayResources.GatewayExtensions, *obj)
+		}
+
 		hcPolicy := addHealthCheckPolicyIfConfigured(svcKey, serviceIR)
 		if hcPolicy != nil {
 			obj, err := i2gw.CastToUnstructured(hcPolicy)
@@ -115,31 +128,109 @@ func BuildGceServiceExtensions(ir intermediate.IR, gatewayResources *i2gw.Gatewa
 			}
 			gatewayResources.GatewayExtensions = append(gatewayResources.GatewayExtensions, *obj)
 		}
+
+		svc := addServiceAppProtocolIfConfigured(svcKey, serviceIR)
+		if svc != nil {
+			obj, err := i2gw.CastToUnstructured(svc)
+			if err != nil {
+				notify(notifications.ErrorNotification, "Failed to cast Service to unstructured", svc)
+				continue
+			}
+
+			// Clean up targetPort if 0 to avoid overwriting existing configuration
+			if spec, ok := obj.Object["spec"].(map[string]interface{}); ok {
+				if ports, ok := spec["ports"].([]interface{}); ok {
+					for _, p := range ports {
+						if portMap, ok := p.(map[string]interface{}); ok {
+							if tp, ok := portMap["targetPort"]; ok {
+								if tpInt, ok := tp.(int64); ok && tpInt == 0 {
+									delete(portMap, "targetPort")
+								}
+							}
+						}
+					}
+				}
+			}
+
+			gatewayResources.GatewayExtensions = append(gatewayResources.GatewayExtensions, *obj)
+		}
 	}
 }
 
-func addGCPBackendPolicyIfConfigured(serviceNamespacedName types.NamespacedName, serviceIR intermediate.ProviderSpecificServiceIR) *gkegatewayv1.GCPBackendPolicy {
+func addServiceAppProtocolIfConfigured(serviceNamespacedName types.NamespacedName, serviceIR intermediate.ProviderSpecificServiceIR) *corev1.Service {
+	if serviceIR.Gce == nil || serviceIR.Gce.AppProtocol == nil || len(serviceIR.Gce.ServicePorts) == 0 {
+		return nil
+	}
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      serviceNamespacedName.Name,
+			Namespace: serviceNamespacedName.Namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{},
+		},
+	}
+	svc.SetGroupVersionKind(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Service"})
+
+	if *serviceIR.Gce.AppProtocol == "HTTPS" {
+		if svc.Annotations == nil {
+			svc.Annotations = make(map[string]string)
+		}
+		// Construct JSON for cloud.google.com/app-protocols
+		// We need to map all ports to HTTPS if the annotation was global, or specific ports if we had that info.
+		// The intermediate IR stores AppProtocol as a single string pointer for the service.
+		// So we apply it to all ports we found.
+		appProtocols := "{"
+		first := true
+		for _, port := range serviceIR.Gce.ServicePorts {
+			if !first {
+				appProtocols += ","
+			}
+			appProtocols += fmt.Sprintf("\"%d\":\"HTTPS\"", port)
+			first = false
+		}
+		appProtocols += "}"
+		svc.Annotations["cloud.google.com/app-protocols"] = appProtocols
+	}
+
+	for name, port := range serviceIR.Gce.ServicePorts {
+		svc.Spec.Ports = append(svc.Spec.Ports, corev1.ServicePort{
+			Name:        name,
+			Port:        port,
+			AppProtocol: serviceIR.Gce.AppProtocol,
+		})
+	}
+	return svc
+}
+
+func BuildGceRouteExtensions(ir intermediate.IR, gatewayResources *i2gw.GatewayResources) {
+	// No GCE specific route extensions for now as CORS is handled via standard filters.
+}
+
+func addGCPBackendPolicyIfConfigured(serviceNamespacedName types.NamespacedName, serviceIR intermediate.ProviderSpecificServiceIR) *LocalGCPBackendPolicy {
 	if serviceIR.Gce == nil {
 		return nil
 	}
 	// If there is no specification related to GCPBackendPolicy feature, return nil.
-	if serviceIR.Gce.SessionAffinity == nil && serviceIR.Gce.SecurityPolicy == nil && serviceIR.Gce.Iap == nil {
+	if serviceIR.Gce.SessionAffinity == nil && serviceIR.Gce.SecurityPolicy == nil && serviceIR.Gce.Iap == nil && serviceIR.Gce.LocalityLbPolicy == nil {
 		return nil
 	}
 
-	gcpBackendPolicy := gkegatewayv1.GCPBackendPolicy{
+	gcpBackendPolicy := LocalGCPBackendPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: serviceNamespacedName.Namespace,
 			Name:      serviceNamespacedName.Name,
 		},
-		Spec: gkegatewayv1.GCPBackendPolicySpec{
-			Default: &gkegatewayv1.GCPBackendPolicyConfig{},
+		Spec: LocalGCPBackendPolicySpec{
+			Default: &LocalGCPBackendPolicyConfig{},
 			TargetRef: gatewayv1alpha2.NamespacedPolicyTargetReference{
 				Group: "",
 				Kind:  "Service",
 				Name:  gatewayv1.ObjectName(serviceNamespacedName.Name),
 			},
 		},
+		Status: map[string]interface{}{},
 	}
 	gcpBackendPolicy.SetGroupVersionKind(GCPBackendPolicyGVK)
 
@@ -155,8 +246,39 @@ func addGCPBackendPolicyIfConfigured(serviceNamespacedName types.NamespacedName,
 	if serviceIR.Gce.Iap != nil {
 		gcpBackendPolicy.Spec.Default.IAP = extensions.BuildGCPBackendPolicyIapConfig(serviceIR)
 	}
+	if serviceIR.Gce.LocalityLbPolicy != nil {
+		gcpBackendPolicy.Spec.Default.LocalityLbPolicy = serviceIR.Gce.LocalityLbPolicy
+	}
 
 	return &gcpBackendPolicy
+}
+
+func addBackendTLSPolicyIfConfigured(serviceNamespacedName types.NamespacedName, serviceIR intermediate.ProviderSpecificServiceIR) *gatewayv1.BackendTLSPolicy {
+	if serviceIR.Gce == nil || serviceIR.Gce.Tls == nil {
+		return nil
+	}
+
+	policyName := fmt.Sprintf("tls-%s", serviceNamespacedName.Name)
+	policy := common.CreateBackendTLSPolicy(serviceNamespacedName.Namespace, policyName, serviceNamespacedName.Name)
+	
+	// Ensure GVK is set for casting
+	policy.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   gatewayv1.GroupVersion.Group,
+		Version: gatewayv1.GroupVersion.Version,
+		Kind:    "BackendTLSPolicy",
+	})
+
+	if serviceIR.Gce.Tls.SecretName != "" {
+		policy.Spec.Validation.CACertificateRefs = []gatewayv1.LocalObjectReference{
+			{
+				Group: "",
+				Kind:  "Secret",
+				Name:  gatewayv1.ObjectName(serviceIR.Gce.Tls.SecretName),
+			},
+		}
+	}
+	
+	return &policy
 }
 
 func addHealthCheckPolicyIfConfigured(serviceNamespacedName types.NamespacedName, serviceIR intermediate.ProviderSpecificServiceIR) *gkegatewayv1.HealthCheckPolicy {

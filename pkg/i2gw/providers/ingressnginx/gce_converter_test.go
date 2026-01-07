@@ -144,12 +144,12 @@ func TestGceFeature(t *testing.T) {
 	rule := routeIR.Spec.Rules[0]
 
 	// Timeouts
-	if rule.Timeouts == nil || rule.Timeouts.Request == nil {
+	if rule.Timeouts == nil || rule.Timeouts.BackendRequest == nil {
 		t.Fatal("Rule timeouts is nil")
 	}
 	expectedTimeout := gatewayv1.Duration("1m0s")
-	if *rule.Timeouts.Request != expectedTimeout {
-		t.Errorf("Timeout mismatch: got %v, want %v", *rule.Timeouts.Request, expectedTimeout)
+	if *rule.Timeouts.BackendRequest != expectedTimeout {
+		t.Errorf("Timeout mismatch: got %v, want %v", *rule.Timeouts.BackendRequest, expectedTimeout)
 	}
 
 	// Filters (Rewrite)
@@ -308,5 +308,132 @@ func TestGceFeature_Redirects(t *testing.T) {
 	}
 	if !foundHTTPS {
 		t.Error("HTTPS listener not created for ssl-redirect")
+	}
+}
+
+func TestGceFeature_Cors(t *testing.T) {
+	ingressClass := "nginx"
+	ingress := networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cors-ingress",
+			Namespace: "default",
+			Annotations: map[string]string{
+				"nginx.ingress.kubernetes.io/enable-cors":            "true",
+				"nginx.ingress.kubernetes.io/cors-allow-origin":      "https://example.com, https://foo.com",
+				"nginx.ingress.kubernetes.io/cors-allow-headers":     "X-Custom-Header, Authorization",
+				"nginx.ingress.kubernetes.io/cors-allow-methods":     "GET, POST, OPTIONS",
+				"nginx.ingress.kubernetes.io/cors-allow-credentials": "true",
+			},
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &ingressClass,
+			Rules: []networkingv1.IngressRule{
+				{
+					Host: "api.example.com",
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path: "/",
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "api-service",
+											Port: networkingv1.ServiceBackendPort{Number: 80},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ir := intermediate.IR{
+		Services: map[types.NamespacedName]intermediate.ProviderSpecificServiceIR{
+			{Namespace: "default", Name: "api-service"}: {},
+		},
+		Gateways: map[types.NamespacedName]intermediate.GatewayContext{
+			{Namespace: "default", Name: "nginx"}: {
+				Gateway: gatewayv1.Gateway{
+					Spec: gatewayv1.GatewaySpec{
+						GatewayClassName: "nginx",
+					},
+				},
+			},
+		},
+		HTTPRoutes: map[types.NamespacedName]intermediate.HTTPRouteContext{
+			{Namespace: "default", Name: "cors-route"}: {
+				HTTPRoute: gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "cors-route",
+						Namespace: "default",
+					},
+					Spec: gatewayv1.HTTPRouteSpec{
+						Rules: []gatewayv1.HTTPRouteRule{
+							{
+								BackendRefs: []gatewayv1.HTTPBackendRef{
+									{
+										BackendRef: gatewayv1.BackendRef{
+											BackendObjectReference: gatewayv1.BackendObjectReference{
+												Name: "api-service",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				RuleBackendSources: [][]intermediate.BackendSource{
+					{
+						{Ingress: &ingress},
+					},
+				},
+			},
+		},
+	}
+
+	errs := gceFeature([]networkingv1.Ingress{ingress}, nil, &ir)
+	if len(errs) > 0 {
+		t.Fatalf("gceFeature returned errors: %v", errs)
+	}
+
+	routeIR := ir.HTTPRoutes[types.NamespacedName{Namespace: "default", Name: "cors-route"}]
+	
+	// Verify CORS filter
+	foundCors := false
+	for _, filter := range routeIR.Spec.Rules[0].Filters {
+		if filter.Type == gatewayv1.HTTPRouteFilterCORS {
+			foundCors = true
+			cors := filter.CORS
+			if cors == nil {
+				t.Fatal("CORS filter config is nil")
+			}
+			
+			// Verify Origins
+			if len(cors.AllowOrigins) != 2 || cors.AllowOrigins[0] != "https://example.com" {
+				t.Errorf("AllowOrigins mismatch: %v", cors.AllowOrigins)
+			}
+			
+			// Verify Headers
+			if len(cors.AllowHeaders) != 2 || cors.AllowHeaders[0] != "X-Custom-Header" {
+				t.Errorf("AllowHeaders mismatch: %v", cors.AllowHeaders)
+			}
+			
+			// Verify Methods
+			if len(cors.AllowMethods) != 3 || cors.AllowMethods[0] != "GET" {
+				t.Errorf("AllowMethods mismatch: %v", cors.AllowMethods)
+			}
+			
+			// Verify Credentials
+			if cors.AllowCredentials == nil || !*cors.AllowCredentials {
+				t.Error("AllowCredentials should be true")
+			}
+		}
+	}
+	if !foundCors {
+		t.Error("CORS filter not found")
 	}
 }

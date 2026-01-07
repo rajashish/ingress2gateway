@@ -32,12 +32,22 @@ type TlsConfig struct {
 type LoggingConfig struct {
 	Enabled bool
 }
-type GceHTTPRouteIR struct{}
+type GceHTTPRouteIR struct {}
+
 type GceServiceIR struct {
 	SessionAffinity *SessionAffinityConfig
 	SecurityPolicy  *SecurityPolicyConfig
 	HealthCheck     *HealthCheckConfig
 	Iap             *IapConfig
+	Tls             *BackendTlsConfig
+	AppProtocol     *string
+	ServicePorts    map[string]int32
+	LocalityLbPolicy *string
+}
+
+type BackendTlsConfig struct {
+	Mode       string
+	SecretName string
 }
 type SessionAffinityConfig struct {
 	AffinityType string

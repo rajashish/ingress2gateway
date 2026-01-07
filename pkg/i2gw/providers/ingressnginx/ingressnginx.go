@@ -86,6 +86,7 @@ func (p *Provider) ToGatewayResources(ir intermediate.IR) (i2gw.GatewayResources
 	if p.outputTo == "gce" {
 		gce.BuildGceGatewayExtensions(ir, &gatewayResources)
 		gce.BuildGceServiceExtensions(ir, &gatewayResources)
+		gce.BuildGceRouteExtensions(ir, &gatewayResources)
 	}
 
 	return gatewayResources, nil
