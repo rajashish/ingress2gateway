@@ -173,7 +173,7 @@ func addServiceAppProtocolIfConfigured(serviceNamespacedName types.NamespacedNam
 	}
 	svc.SetGroupVersionKind(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Service"})
 
-	if *serviceIR.Gce.AppProtocol == "HTTPS" {
+	if *serviceIR.Gce.AppProtocol != "" {
 		if svc.Annotations == nil {
 			svc.Annotations = make(map[string]string)
 		}
@@ -187,7 +187,7 @@ func addServiceAppProtocolIfConfigured(serviceNamespacedName types.NamespacedNam
 			if !first {
 				appProtocols += ","
 			}
-			appProtocols += fmt.Sprintf("\"%d\":\"HTTPS\"", port)
+			appProtocols += fmt.Sprintf("\"%d\":\"%s\"", port, *serviceIR.Gce.AppProtocol)
 			first = false
 		}
 		appProtocols += "}"

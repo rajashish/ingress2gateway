@@ -445,37 +445,44 @@ func processServiceAnnotations(ingress networkingv1.Ingress, ir *intermediate.IR
 
 		// 4. Backend Protocol
 		// annotations: backend-protocol
-		if val, ok := ingress.Annotations[annotationBackendProtocol]; ok && val == backendProtocolHTTPS {
-			serviceIR.Gce.AppProtocol = &val
-			
-			// Also set HealthCheck Type as per upstream changes
-			if serviceIR.Gce.HealthCheck == nil {
-				serviceIR.Gce.HealthCheck = &intermediate.HealthCheckConfig{}
-			}
-			t := backendProtocolHTTPS
-			serviceIR.Gce.HealthCheck.Type = &t
-
-			if serviceIR.Gce.ServicePorts == nil {
-				serviceIR.Gce.ServicePorts = make(map[string]int32)
-			}
-			if ports, ok := servicePorts[svcKey]; ok {
-				for name, port := range ports {
-					serviceIR.Gce.ServicePorts[name] = port
+		if val, ok := ingress.Annotations[annotationBackendProtocol]; ok {
+			upperVal := strings.ToUpper(val)
+			if upperVal == "HTTPS" || upperVal == "HTTP2" || upperVal == "GRPC" {
+				appProtocol := upperVal
+				if upperVal == "GRPC" {
+					appProtocol = "HTTP2"
 				}
-			} else {
-				// Fallback: try to find ports in the Ingress itself
-				extracted := getPortsForService(ingress, svcName)
-				for _, p := range extracted {
-					// Check if already exists
-					found := false
-					for _, existing := range serviceIR.Gce.ServicePorts {
-						if existing == p {
-							found = true
-							break
-						}
+
+				serviceIR.Gce.AppProtocol = &appProtocol
+
+				// Also set HealthCheck Type as per upstream changes
+				if serviceIR.Gce.HealthCheck == nil {
+					serviceIR.Gce.HealthCheck = &intermediate.HealthCheckConfig{}
+				}
+				serviceIR.Gce.HealthCheck.Type = &appProtocol
+
+				if serviceIR.Gce.ServicePorts == nil {
+					serviceIR.Gce.ServicePorts = make(map[string]int32)
+				}
+				if ports, ok := servicePorts[svcKey]; ok {
+					for name, port := range ports {
+						serviceIR.Gce.ServicePorts[name] = port
 					}
-					if !found {
-						serviceIR.Gce.ServicePorts[fmt.Sprintf("port-%d", p)] = p
+				} else {
+					// Fallback: try to find ports in the Ingress itself
+					extracted := getPortsForService(ingress, svcName)
+					for _, p := range extracted {
+						// Check if already exists
+						found := false
+						for _, existing := range serviceIR.Gce.ServicePorts {
+							if existing == p {
+								found = true
+								break
+							}
+						}
+						if !found {
+							serviceIR.Gce.ServicePorts[fmt.Sprintf("port-%d", p)] = p
+						}
 					}
 				}
 			}
