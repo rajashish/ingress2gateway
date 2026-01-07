@@ -53,6 +53,12 @@ const (
 	annotationSessionCookieExpires = annotationPrefix + "/session-cookie-expires"
 	annotationAffinityMode         = annotationPrefix + "/affinity-mode"
 	annotationBackendProtocol      = annotationPrefix + "/backend-protocol"
+	annotationUseRegex             = annotationPrefix + "/use-regex"
+	annotationEnableCors           = annotationPrefix + "/enable-cors"
+	annotationCorsAllowOrigin      = annotationPrefix + "/cors-allow-origin"
+	annotationCorsAllowHeaders     = annotationPrefix + "/cors-allow-headers"
+	annotationCorsAllowMethods     = annotationPrefix + "/cors-allow-methods"
+	annotationCorsAllowCredentials = annotationPrefix + "/cors-allow-credentials"
 
 	// Values and Policy Names
 	policyManualExternalAuth = "manual-external-auth-policy-required"
@@ -106,7 +112,7 @@ func gceFeature(ingressList []networkingv1.Ingress, servicePorts map[types.Names
 					}
 
 					// Handle Regex Path Matching
-					if val, ok := source.Ingress.Annotations["nginx.ingress.kubernetes.io/use-regex"]; ok && val == "true" {
+					if val, ok := source.Ingress.Annotations[annotationUseRegex]; ok && val == "true" {
 						for j := range route.Spec.Rules[i].Matches {
 							if route.Spec.Rules[i].Matches[j].Path != nil {
 								t := gatewayv1.PathMatchRegularExpression
@@ -136,15 +142,15 @@ func gceFeature(ingressList []networkingv1.Ingress, servicePorts map[types.Names
 }
 
 func processCorsAnnotations(ingress *networkingv1.Ingress, route *intermediate.HTTPRouteContext, routeName types.NamespacedName) {
-	enableCors := ingress.Annotations["nginx.ingress.kubernetes.io/enable-cors"]
+	enableCors := ingress.Annotations[annotationEnableCors]
 	if enableCors != "true" {
 		return
 	}
 
-	allowOrigin := ingress.Annotations["nginx.ingress.kubernetes.io/cors-allow-origin"]
-	allowHeaders := ingress.Annotations["nginx.ingress.kubernetes.io/cors-allow-headers"]
-	allowMethods := ingress.Annotations["nginx.ingress.kubernetes.io/cors-allow-methods"]
-	allowCredentials := ingress.Annotations["nginx.ingress.kubernetes.io/cors-allow-credentials"]
+	allowOrigin := ingress.Annotations[annotationCorsAllowOrigin]
+	allowHeaders := ingress.Annotations[annotationCorsAllowHeaders]
+	allowMethods := ingress.Annotations[annotationCorsAllowMethods]
+	allowCredentials := ingress.Annotations[annotationCorsAllowCredentials]
 
 	corsFilter := gatewayv1.HTTPRouteFilter{
 		Type: gatewayv1.HTTPRouteFilterCORS,
