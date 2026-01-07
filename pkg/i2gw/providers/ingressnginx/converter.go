@@ -29,11 +29,21 @@ type resourcesToIRConverter struct {
 }
 
 // newResourcesToIRConverter returns an ingress-nginx resourcesToIRConverter instance.
-func newResourcesToIRConverter() *resourcesToIRConverter {
+func newResourcesToIRConverter(conf *i2gw.ProviderConf) *resourcesToIRConverter {
+	featureParsers := []i2gw.FeatureParser{
+		canaryFeature,
+	}
+
+	if conf != nil && conf.ProviderSpecificFlags != nil {
+		if flags, ok := conf.ProviderSpecificFlags[Name]; ok {
+			if outputTo, ok := flags[OutputToFlag]; ok && outputTo == "gce" {
+				featureParsers = append(featureParsers, gceFeature)
+			}
+		}
+	}
+
 	return &resourcesToIRConverter{
-		featureParsers: []i2gw.FeatureParser{
-			canaryFeature,
-		},
+		featureParsers: featureParsers,
 	}
 }
 
