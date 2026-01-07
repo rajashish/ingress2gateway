@@ -37,6 +37,42 @@ func BuildGCPBackendPolicySecurityPolicyConfig(serviceIR intermediate.ProviderSp
 	return &securityPolicy
 }
 
+func BuildGCPBackendPolicyIapConfig(serviceIR intermediate.ProviderSpecificServiceIR) *gkegatewayv1.IdentityAwareProxyConfig {
+	if serviceIR.Gce.Iap == nil {
+		return nil
+	}
+	iapConfig := &gkegatewayv1.IdentityAwareProxyConfig{
+		Enabled: &serviceIR.Gce.Iap.Enabled,
+	}
+	if serviceIR.Gce.Iap.SecretName != "" {
+		iapConfig.Oauth2ClientSecret = &gkegatewayv1.Oauth2ClientSecret{
+			Name: &serviceIR.Gce.Iap.SecretName,
+		}
+	}
+	if serviceIR.Gce.Iap.ClientID != "" {
+		iapConfig.ClientID = &serviceIR.Gce.Iap.ClientID
+	}
+	return iapConfig
+}
+
+func BuildGCPBackendPolicyTlsConfig(serviceIR intermediate.ProviderSpecificServiceIR) *GCPBackendPolicyTLS {
+	if serviceIR.Gce.Tls == nil {
+		return nil
+	}
+	config := &GCPBackendPolicyTLS{}
+	if serviceIR.Gce.Tls.Mode != "" {
+		config.Mode = &serviceIR.Gce.Tls.Mode
+	}
+	if serviceIR.Gce.Tls.SecretName != "" {
+		config.CAResult = &GCPBackendPolicyCAResult{
+			SecretRef: &SecretReference{
+				Name: serviceIR.Gce.Tls.SecretName,
+			},
+		}
+	}
+	return config
+}
+
 func BuildGCPGatewayPolicySecurityPolicyConfig(gatewayIR intermediate.ProviderSpecificGatewayIR) string {
 	return gatewayIR.Gce.SslPolicy.Name
 }

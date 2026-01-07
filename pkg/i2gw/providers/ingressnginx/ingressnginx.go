@@ -23,6 +23,7 @@ import (
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/intermediate"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/providers/common"
+	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/providers/gce"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
@@ -30,6 +31,7 @@ import (
 const Name = "ingress-nginx"
 const NginxIngressClass = "nginx"
 const NginxIngressClassFlag = "ingress-class"
+const OutputToFlag = "output-to"
 
 func init() {
 	i2gw.ProviderConstructorByName[Name] = NewProvider
@@ -38,6 +40,11 @@ func init() {
 		Description:  "The name of the ingress class to select. Defaults to 'nginx'",
 		DefaultValue: NginxIngressClass,
 	})
+	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
+		Name:         "output-to",
+		Description:  "The target implementation to generate resources for. Options: 'gateway-api' (default), 'gce'.",
+		DefaultValue: "gateway-api",
+	})
 }
 
 // Provider implements the i2gw.Provider interface.
@@ -45,14 +52,22 @@ type Provider struct {
 	storage                *storage
 	resourceReader         *resourceReader
 	resourcesToIRConverter *resourcesToIRConverter
+	outputTo               string
 }
 
 // NewProvider constructs and returns the ingress-nginx implementation of i2gw.Provider.
 func NewProvider(conf *i2gw.ProviderConf) i2gw.Provider {
+	outputTo := "gateway-api"
+	if flags, ok := conf.ProviderSpecificFlags[Name]; ok {
+		if val, ok := flags[OutputToFlag]; ok {
+			outputTo = val
+		}
+	}
 	return &Provider{
 		storage:                newResourcesStorage(),
 		resourceReader:         newResourceReader(conf),
-		resourcesToIRConverter: newResourcesToIRConverter(),
+		resourcesToIRConverter: newResourcesToIRConverter(outputTo),
+		outputTo:               outputTo,
 	}
 }
 
@@ -63,8 +78,18 @@ func (p *Provider) ToIR() (intermediate.IR, field.ErrorList) {
 }
 
 func (p *Provider) ToGatewayResources(ir intermediate.IR) (i2gw.GatewayResources, field.ErrorList) {
-	return common.ToGatewayResources(ir)
+	gatewayResources, errs := common.ToGatewayResources(ir)
+	if len(errs) > 0 {
+		return i2gw.GatewayResources{}, errs
+	}
 
+	if p.outputTo == "gce" {
+		gce.BuildGceGatewayExtensions(ir, &gatewayResources)
+		gce.BuildGceServiceExtensions(ir, &gatewayResources)
+		gce.BuildGceRouteExtensions(ir, &gatewayResources)
+	}
+
+	return gatewayResources, nil
 }
 
 func (p *Provider) ReadResourcesFromCluster(ctx context.Context) error {
