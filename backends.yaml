@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: foo-service
+spec:
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: foo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: foo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: foo
+  template:
+    metadata:
+      labels:
+        app: foo
+    spec:
+      containers:
+      - name: echo
+        image: ealen/echo-server:latest
+        env:
+        - name: PORT
+          value: "80"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bar-service
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: bar
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bar
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bar
+  template:
+    metadata:
+      labels:
+        app: bar
+    spec:
+      containers:
+      - name: echo
+        image: ealen/echo-server:latest
+        env:
+        - name: PORT
+          value: "8080"

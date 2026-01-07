@@ -1,0 +1,61 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend-protocol-https
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: secure-backend.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: secure-svc
+            port:
+              number: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: timeouts
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: timeouts.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: timeout-svc
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: filters
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: "/new/$1"
+    nginx.ingress.kubernetes.io/upstream-vhost: "backend.internal"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: filters.example.com
+    http:
+      paths:
+      - path: /opts/(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: filter-svc
+            port:
+              number: 80

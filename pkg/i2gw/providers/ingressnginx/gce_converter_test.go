@@ -183,3 +183,148 @@ func TestGceFeature_Redirects(t *testing.T) {
 		t.Error("HTTPS listener not created for ssl-redirect")
 	}
 }
+
+func TestGceFeature_Timeouts_Filters_BackendProtocol(t *testing.T) {
+	ingressClass := "nginx"
+	ingress := networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "timeout-ingress",
+			Namespace: "default",
+			Annotations: map[string]string{
+				"nginx.ingress.kubernetes.io/proxy-read-timeout": "60",
+				"nginx.ingress.kubernetes.io/proxy-send-timeout": "30",
+				"nginx.ingress.kubernetes.io/backend-protocol":   "HTTPS",
+				"nginx.ingress.kubernetes.io/rewrite-target":     "/new",
+				"nginx.ingress.kubernetes.io/upstream-vhost":     "backend.example.com",
+			},
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &ingressClass,
+			Rules: []networkingv1.IngressRule{
+				{
+					Host: "example.com",
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path: "/old",
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: "timeout-service",
+											Port: networkingv1.ServiceBackendPort{Number: 80},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	
+	ir := intermediate.IR{
+		Services: map[types.NamespacedName]intermediate.ProviderSpecificServiceIR{
+			{Namespace: "default", Name: "timeout-service"}: {},
+		},
+		Gateways: map[types.NamespacedName]intermediate.GatewayContext{
+			{Namespace: "default", Name: "nginx"}: {Gateway: gatewayv1.Gateway{}},
+		},
+		HTTPRoutes: map[types.NamespacedName]intermediate.HTTPRouteContext{
+			{Namespace: "default", Name: "timeout-route"}: {
+				HTTPRoute: gatewayv1.HTTPRoute{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "timeout-route",
+						Namespace: "default",
+					},
+					Spec: gatewayv1.HTTPRouteSpec{
+						Rules: []gatewayv1.HTTPRouteRule{
+							{
+								BackendRefs: []gatewayv1.HTTPBackendRef{
+									{
+										BackendRef: gatewayv1.BackendRef{
+											BackendObjectReference: gatewayv1.BackendObjectReference{
+												Name: "timeout-service",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				RuleBackendSources: [][]intermediate.BackendSource{
+					{{Ingress: &ingress}},
+				},
+			},
+		},
+	}
+
+	errs := gceFeature([]networkingv1.Ingress{ingress}, nil, &ir)
+	if len(errs) > 0 {
+		t.Fatalf("gceFeature returned errors: %v", errs)
+	}
+
+	// Verify Service IR (Backend Protocol)
+	svcIR := ir.Services[types.NamespacedName{Namespace: "default", Name: "timeout-service"}]
+	if svcIR.Gce == nil || svcIR.Gce.HealthCheck == nil || svcIR.Gce.HealthCheck.Type == nil || *svcIR.Gce.HealthCheck.Type != "HTTPS" {
+		t.Error("Backend Protocol not set to HTTPS on Service IR HealthCheck")
+	}
+	if svcIR.Gce.AppProtocol == nil || *svcIR.Gce.AppProtocol != "HTTPS" {
+		t.Error("AppProtocol not set to HTTPS on Service IR")
+	}
+
+	// Verify Service IR (Backend Protocol)
+	if svcIR.Gce == nil || svcIR.Gce.HealthCheck == nil || svcIR.Gce.HealthCheck.Type == nil || *svcIR.Gce.HealthCheck.Type != "HTTPS" {
+		t.Error("Backend Protocol not set to HTTPS on Service IR HealthCheck")
+	}
+	if svcIR.Gce.AppProtocol == nil || *svcIR.Gce.AppProtocol != "HTTPS" {
+		t.Error("AppProtocol not set to HTTPS on Service IR")
+	}
+	
+	// Verify ServicePorts populated
+	if len(svcIR.Gce.ServicePorts) == 0 {
+		t.Error("ServicePorts not populated in GceServiceIR")
+	}
+
+	// Verify HTTPRoute (Timeouts & Filters)
+	routeIR := ir.HTTPRoutes[types.NamespacedName{Namespace: "default", Name: "timeout-route"}]
+	rule := routeIR.Spec.Rules[0]
+
+	// Timeouts
+	if rule.Timeouts == nil || rule.Timeouts.Request == nil {
+		t.Error("Request timeout is nil")
+	} else if *rule.Timeouts.Request != gatewayv1.Duration("1m0s") {
+		t.Errorf("Request timeout mismatch: got %v", *rule.Timeouts.Request)
+	}
+	if rule.Timeouts.BackendRequest == nil {
+		t.Error("BackendRequest timeout is nil")
+	} else if *rule.Timeouts.BackendRequest != gatewayv1.Duration("30s") {
+		t.Errorf("BackendRequest timeout mismatch: got %v", *rule.Timeouts.BackendRequest)
+	}
+
+	// Filters
+	foundRewrite := false
+	foundVHost := false
+	for _, filter := range rule.Filters {
+		if filter.Type == gatewayv1.HTTPRouteFilterURLRewrite {
+			foundRewrite = true
+			if filter.URLRewrite.Path.ReplaceFullPath == nil || *filter.URLRewrite.Path.ReplaceFullPath != "/new" {
+				t.Errorf("Rewrite target mismatch: got %v", filter.URLRewrite.Path.ReplaceFullPath)
+			}
+		}
+		if filter.Type == gatewayv1.HTTPRouteFilterRequestHeaderModifier {
+			for _, h := range filter.RequestHeaderModifier.Set {
+				if h.Name == "Host" && h.Value == "backend.example.com" {
+					foundVHost = true
+				}
+			}
+		}
+	}
+	if !foundRewrite {
+		t.Error("Rewrite filter not found")
+	}
+	if !foundVHost {
+		t.Error("Upstream VHost filter not found")
+	}
+}

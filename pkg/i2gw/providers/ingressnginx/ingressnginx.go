@@ -35,7 +35,7 @@ const OutputToFlag = "output-to"
 func init() {
 	i2gw.ProviderConstructorByName[Name] = NewProvider
 	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
-		Name:         "ingress-class",
+		Name:         NginxIngressClassFlag,
 		Description:  "The name of the ingress class to select. Defaults to 'nginx'",
 		DefaultValue: NginxIngressClass,
 	})

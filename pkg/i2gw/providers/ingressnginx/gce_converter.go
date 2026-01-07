@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/intermediate"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/providers/common"
@@ -37,12 +38,23 @@ const (
 	annotationForceSSLRedirect  = annotationPrefix + "/force-ssl-redirect"
 	annotationPermanentRedirect = annotationPrefix + "/permanent-redirect"
 	annotationTemporalRedirect  = annotationPrefix + "/temporal-redirect"
+	annotationProxyReadTimeout  = annotationPrefix + "/proxy-read-timeout"
+	annotationProxySendTimeout  = annotationPrefix + "/proxy-send-timeout"
+	annotationRewriteTarget     = annotationPrefix + "/rewrite-target"
+	annotationUpstreamVHost     = annotationPrefix + "/upstream-vhost"
+	annotationBackendProtocol   = annotationPrefix + "/backend-protocol"
+
+	// Values
+	backendProtocolHTTPS = "HTTPS"
 )
 
 func gceFeature(ingressList []networkingv1.Ingress, servicePorts map[types.NamespacedName]map[string]int32, ir *intermediate.IR) field.ErrorList {
 	var errs field.ErrorList
 
-	// Process Services (GCPBackendPolicy) - None for Redirects PR
+	// Process Services (GCPBackendPolicy)
+	for _, ingress := range ingressList {
+		processServiceAnnotations(ingress, servicePorts, ir)
+	}
 
 	// Process Gateway Annotations (None explicitly, but SSL Redirect affects Gateways indirectly via route requirements, actually it updates Gateway Listeners)
 	// We handle SSL Redirect at the end as it aggregates across routes/ingresses usually, or per route.
@@ -86,6 +98,91 @@ func gceFeature(ingressList []networkingv1.Ingress, servicePorts map[types.Names
 	processSSLRedirects(ir)
 
 	return errs
+}
+
+func processServiceAnnotations(ingress networkingv1.Ingress, servicePorts map[types.NamespacedName]map[string]int32, ir *intermediate.IR) {
+	services := getReferencedServices(ingress)
+
+	for _, svcName := range services {
+		svcKey := types.NamespacedName{Namespace: ingress.Namespace, Name: svcName}
+		serviceIR, ok := ir.Services[svcKey]
+		if !ok {
+			serviceIR = intermediate.ProviderSpecificServiceIR{}
+		}
+		if serviceIR.Gce == nil {
+			serviceIR.Gce = &intermediate.GceServiceIR{}
+		}
+
+		// Backend Protocol
+		// annotations: backend-protocol
+		if val, ok := ingress.Annotations[annotationBackendProtocol]; ok && val == backendProtocolHTTPS {
+			serviceIR.Gce.AppProtocol = &val
+
+			// Also set HealthCheck Type as per upstream changes
+			if serviceIR.Gce.HealthCheck == nil {
+				serviceIR.Gce.HealthCheck = &intermediate.HealthCheckConfig{}
+			}
+			t := backendProtocolHTTPS
+			serviceIR.Gce.HealthCheck.Type = &t
+
+			if serviceIR.Gce.ServicePorts == nil {
+				serviceIR.Gce.ServicePorts = make(map[string]int32)
+			}
+			if ports, ok := servicePorts[svcKey]; ok {
+				for name, port := range ports {
+					serviceIR.Gce.ServicePorts[name] = port
+				}
+			} else {
+				// Fallback: try to find ports in the Ingress itself
+				extracted := getPortsForService(ingress, svcName)
+				for _, p := range extracted {
+					// Check if already exists
+					found := false
+					for _, existing := range serviceIR.Gce.ServicePorts {
+						if existing == p {
+							found = true
+							break
+						}
+					}
+					if !found {
+						serviceIR.Gce.ServicePorts[fmt.Sprintf("port-%d", p)] = p
+					}
+				}
+			}
+
+			
+			// Populate ports logic:
+			// We iterate over the servicePorts we found from getPortsForService or Ingress
+			
+			// If we have an AppProtocol of HTTPS, we want to ensure we track it.
+			// The IR already has ServicePorts map[string]int32.
+			// The AppProtocol field on GceServiceIR is a *string.
+			// We can assume if backend-protocol annotation is HTTPS, it applies to the service.
+
+			if *serviceIR.Gce.AppProtocol == "HTTPS" {
+				// We already set this earlier: serviceIR.Gce.AppProtocol = &proto
+			}
+		}
+
+		ir.Services[svcKey] = serviceIR
+	}
+}
+
+func getReferencedServices(ingress networkingv1.Ingress) []string {
+	var services []string
+	if ingress.Spec.DefaultBackend != nil && ingress.Spec.DefaultBackend.Service != nil {
+		services = append(services, ingress.Spec.DefaultBackend.Service.Name)
+	}
+	for _, rule := range ingress.Spec.Rules {
+		if rule.HTTP != nil {
+			for _, path := range rule.HTTP.Paths {
+				if path.Backend.Service != nil {
+					services = append(services, path.Backend.Service.Name)
+				}
+			}
+		}
+	}
+	return services
 }
 
 func processSSLRedirects(ir *intermediate.IR) {
@@ -255,6 +352,63 @@ func ensureHTTPSListener(ir *intermediate.IR, parentRefs []gatewayv1.ParentRefer
 }
 
 func processRouteAnnotations(ingress *networkingv1.Ingress, rule *gatewayv1.HTTPRouteRule) {
+	// 1. Timeouts
+	// annotations: proxy-read-timeout, proxy-send-timeout
+	if val, ok := ingress.Annotations[annotationProxyReadTimeout]; ok {
+		if duration, err := time.ParseDuration(val + "s"); err == nil { // Nginx timeout is in seconds usually
+			if rule.Timeouts == nil {
+				rule.Timeouts = &gatewayv1.HTTPRouteTimeouts{}
+			}
+			gwDuration := gatewayv1.Duration(duration.String())
+			rule.Timeouts.Request = &gwDuration
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse proxy-read-timeout %q: %v\n", val, err)
+		}
+	}
+	if val, ok := ingress.Annotations[annotationProxySendTimeout]; ok {
+		if duration, err := time.ParseDuration(val + "s"); err == nil {
+			if rule.Timeouts == nil {
+				rule.Timeouts = &gatewayv1.HTTPRouteTimeouts{}
+			}
+			gwDuration := gatewayv1.Duration(duration.String())
+			rule.Timeouts.BackendRequest = &gwDuration
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse proxy-send-timeout %q: %v\n", val, err)
+		}
+	}
+
+	// 2. Rewrites
+	// annotations: rewrite-target
+	if val, ok := ingress.Annotations[annotationRewriteTarget]; ok {
+		filter := gatewayv1.HTTPRouteFilter{
+			Type: gatewayv1.HTTPRouteFilterURLRewrite,
+			URLRewrite: &gatewayv1.HTTPURLRewriteFilter{
+				Path: &gatewayv1.HTTPPathModifier{
+					Type:            gatewayv1.FullPathHTTPPathModifier,
+					ReplaceFullPath: &val,
+				},
+			},
+		}
+		rule.Filters = append(rule.Filters, filter)
+	}
+
+	// 3. Upstream VHost
+	// annotations: upstream-vhost
+	if val, ok := ingress.Annotations[annotationUpstreamVHost]; ok && val != "" {
+		filter := gatewayv1.HTTPRouteFilter{
+			Type: gatewayv1.HTTPRouteFilterRequestHeaderModifier,
+			RequestHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+				Set: []gatewayv1.HTTPHeader{
+					{
+						Name:  "Host",
+						Value: val,
+					},
+				},
+			},
+		}
+		rule.Filters = append(rule.Filters, filter)
+	}
+
 	// 4. Redirects
 	// annotations: permanent-redirect, temporal-redirect
 	if val, ok := ingress.Annotations[annotationPermanentRedirect]; ok {
@@ -304,9 +458,26 @@ func applyRedirect(url string, statusCode int, rule *gatewayv1.HTTPRouteRule) {
 	rule.Filters = append(rule.Filters, filter)
 }
 
-func getReferencedServices(ingress networkingv1.Ingress) []string {
-    // Logic not needed for Redirects PR but usually referenced in other files.
-    // I shall omit it to keep this file small and focused on redirects only,
-    // UNLESS it's required by the interface (it's not, it's a helper).
-    return nil
+func getPortsForService(ingress networkingv1.Ingress, serviceName string) []int32 {
+	var ports []int32
+	if ingress.Spec.DefaultBackend != nil && ingress.Spec.DefaultBackend.Service != nil {
+		if ingress.Spec.DefaultBackend.Service.Name == serviceName {
+			if ingress.Spec.DefaultBackend.Service.Port.Number > 0 {
+				ports = append(ports, ingress.Spec.DefaultBackend.Service.Port.Number)
+			}
+		}
+	}
+	for _, rule := range ingress.Spec.Rules {
+		if rule.HTTP != nil {
+			for _, path := range rule.HTTP.Paths {
+				if path.Backend.Service != nil && path.Backend.Service.Name == serviceName {
+					if path.Backend.Service.Port.Number > 0 {
+						ports = append(ports, path.Backend.Service.Port.Number)
+					}
+				}
+			}
+		}
+	}
+	return ports
 }
+

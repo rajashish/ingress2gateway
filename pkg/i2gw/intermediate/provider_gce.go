@@ -28,6 +28,8 @@ type GceServiceIR struct {
 	SessionAffinity *SessionAffinityConfig
 	SecurityPolicy  *SecurityPolicyConfig
 	HealthCheck     *HealthCheckConfig
+	AppProtocol     *string
+	ServicePorts    map[string]int32
 }
 type SessionAffinityConfig struct {
 	AffinityType string
