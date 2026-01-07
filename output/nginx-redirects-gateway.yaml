@@ -1,0 +1,166 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  annotations:
+    gateway.networking.k8s.io/generator: ingress2gateway-dev
+  name: nginx
+spec:
+  gatewayClassName: nginx
+  listeners:
+  - hostname: example.com
+    name: example-com-http
+    port: 80
+    protocol: HTTP
+  - hostname: perm.example.com
+    name: perm-example-com-http
+    port: 80
+    protocol: HTTP
+  - hostname: secure.example.com
+    name: secure-example-com-http
+    port: 80
+    protocol: HTTP
+  - hostname: secure.example.com
+    name: secure-example-com-https
+    port: 443
+    protocol: HTTPS
+    tls:
+      certificateRefs:
+      - group: null
+        kind: null
+        name: wildcard-cert
+  - hostname: temp.example.com
+    name: temp-example-com-http
+    port: 80
+    protocol: HTTP
+status: {}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  annotations:
+    gateway.networking.k8s.io/generator: ingress2gateway-dev
+  name: www-redirect-example-com
+spec:
+  hostnames:
+  - example.com
+  parentRefs:
+  - name: nginx
+  rules:
+  - backendRefs:
+    - name: test-svc
+      port: 80
+    filters:
+    - requestRedirect:
+        hostname: www.example.com
+        statusCode: 301
+      type: RequestRedirect
+    matches:
+    - path:
+        type: PathPrefix
+        value: /
+status:
+  parents: []
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  annotations:
+    gateway.networking.k8s.io/generator: ingress2gateway-dev
+  name: permanent-redirect-perm-example-com
+spec:
+  hostnames:
+  - perm.example.com
+  parentRefs:
+  - name: nginx
+  rules:
+  - backendRefs:
+    - name: test-svc
+      port: 80
+    filters:
+    - requestRedirect:
+        path:
+          replaceFullPath: /new-path
+          type: ReplaceFullPath
+        statusCode: 301
+      type: RequestRedirect
+    matches:
+    - path:
+        type: PathPrefix
+        value: /
+status:
+  parents: []
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  annotations:
+    gateway.networking.k8s.io/generator: ingress2gateway-dev
+  name: ssl-redirect-secure-example-com
+spec:
+  hostnames:
+  - secure.example.com
+  parentRefs:
+  - name: nginx
+    port: 443
+  rules:
+  - backendRefs:
+    - name: test-svc
+      port: 80
+    matches:
+    - path:
+        type: PathPrefix
+        value: /
+status:
+  parents: []
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  annotations:
+    gateway.networking.k8s.io/generator: ingress2gateway-dev
+  name: temporal-redirect-temp-example-com
+spec:
+  hostnames:
+  - temp.example.com
+  parentRefs:
+  - name: nginx
+  rules:
+  - backendRefs:
+    - name: test-svc
+      port: 80
+    filters:
+    - requestRedirect:
+        statusCode: 302
+      type: RequestRedirect
+    matches:
+    - path:
+        type: PathPrefix
+        value: /
+status:
+  parents: []
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  annotations:
+    gateway.networking.k8s.io/generator: ingress2gateway-dev
+  name: ssl-redirect-secure-example-com-redirect
+spec:
+  hostnames:
+  - secure.example.com
+  parentRefs:
+  - name: nginx
+    port: 80
+  rules:
+  - filters:
+    - requestRedirect:
+        port: 443
+        scheme: https
+        statusCode: 301
+      type: RequestRedirect
+    matches:
+    - path:
+        type: PathPrefix
+        value: /
+status:
+  parents: null
