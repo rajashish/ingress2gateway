@@ -1,0 +1,83 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: www-redirect
+  annotations:
+    nginx.ingress.kubernetes.io/from-to-www-redirect: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: test-svc
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ssl-redirect
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - secure.example.com
+    secretName: wildcard-cert
+  rules:
+  - host: secure.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: test-svc
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: permanent-redirect
+  annotations:
+    nginx.ingress.kubernetes.io/permanent-redirect: "/new-path"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: perm.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: test-svc
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: temporal-redirect
+  annotations:
+    nginx.ingress.kubernetes.io/temporal-redirect: "https://temp.example.com/temp"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: temp.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: test-svc
+            port:
+              number: 80
