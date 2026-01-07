@@ -268,7 +268,23 @@ func TestGceFeature_Timeouts_Filters_BackendProtocol(t *testing.T) {
 	// Verify Service IR (Backend Protocol)
 	svcIR := ir.Services[types.NamespacedName{Namespace: "default", Name: "timeout-service"}]
 	if svcIR.Gce == nil || svcIR.Gce.HealthCheck == nil || svcIR.Gce.HealthCheck.Type == nil || *svcIR.Gce.HealthCheck.Type != "HTTPS" {
-		t.Error("Backend Protocol not set to HTTPS on Service IR")
+		t.Error("Backend Protocol not set to HTTPS on Service IR HealthCheck")
+	}
+	if svcIR.Gce.AppProtocol == nil || *svcIR.Gce.AppProtocol != "HTTPS" {
+		t.Error("AppProtocol not set to HTTPS on Service IR")
+	}
+
+	// Verify Service IR (Backend Protocol)
+	if svcIR.Gce == nil || svcIR.Gce.HealthCheck == nil || svcIR.Gce.HealthCheck.Type == nil || *svcIR.Gce.HealthCheck.Type != "HTTPS" {
+		t.Error("Backend Protocol not set to HTTPS on Service IR HealthCheck")
+	}
+	if svcIR.Gce.AppProtocol == nil || *svcIR.Gce.AppProtocol != "HTTPS" {
+		t.Error("AppProtocol not set to HTTPS on Service IR")
+	}
+	
+	// Verify ServicePorts populated
+	if len(svcIR.Gce.ServicePorts) == 0 {
+		t.Error("ServicePorts not populated in GceServiceIR")
 	}
 
 	// Verify HTTPRoute (Timeouts & Filters)

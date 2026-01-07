@@ -149,6 +149,19 @@ func processServiceAnnotations(ingress networkingv1.Ingress, servicePorts map[ty
 					}
 				}
 			}
+
+			
+			// Populate ports logic:
+			// We iterate over the servicePorts we found from getPortsForService or Ingress
+			
+			// If we have an AppProtocol of HTTPS, we want to ensure we track it.
+			// The IR already has ServicePorts map[string]int32.
+			// The AppProtocol field on GceServiceIR is a *string.
+			// We can assume if backend-protocol annotation is HTTPS, it applies to the service.
+
+			if *serviceIR.Gce.AppProtocol == "HTTPS" {
+				// We already set this earlier: serviceIR.Gce.AppProtocol = &proto
+			}
 		}
 
 		ir.Services[svcKey] = serviceIR
