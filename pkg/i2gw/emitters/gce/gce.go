@@ -17,12 +17,15 @@ limitations under the License.
 package gce_emitter
 
 import (
+	"fmt"
+
 	gkegatewayv1 "github.com/GoogleCloudPlatform/gke-gateway-api/apis/networking/v1"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw"
 	emitterir "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitter_intermediate"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitter_intermediate/gce"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitters/utils"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/notifications"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -109,24 +112,12 @@ func addGatewayPolicyIfConfigured(gatewayNamespacedName types.NamespacedName, ga
 		},
 	}
 	gcpGatewayPolicy.SetGroupVersionKind(GCPGatewayPolicyGVK)
-	if gatewayIR.Gce.SslPolicy != nil {
-		gcpGatewayPolicy.Spec.Default.SslPolicy = BuildGCPGatewayPolicySecurityPolicyConfig(gatewayIR)
-	}
+	// SslPolicy support deferred to later PR
 	return &gcpGatewayPolicy
 }
 
 func buildGceServiceExtensions(ir emitterir.EmitterIR, gatewayResources *i2gw.GatewayResources) {
 	for svcKey, gceServiceIR := range ir.GceServices {
-		bePolicy := addGCPBackendPolicyIfConfigured(svcKey, gceServiceIR)
-		if bePolicy != nil {
-			obj, err := i2gw.CastToUnstructured(bePolicy)
-			if err != nil {
-				notify(notifications.ErrorNotification, "Failed to cast GCPBackendPolicy to unstructured", bePolicy)
-				continue
-			}
-			gatewayResources.GatewayExtensions = append(gatewayResources.GatewayExtensions, *obj)
-		}
-
 		hcPolicy := addHealthCheckPolicyIfConfigured(svcKey, &gceServiceIR)
 		if hcPolicy != nil {
 			obj, err := i2gw.CastToUnstructured(hcPolicy)
@@ -136,39 +127,77 @@ func buildGceServiceExtensions(ir emitterir.EmitterIR, gatewayResources *i2gw.Ga
 			}
 			gatewayResources.GatewayExtensions = append(gatewayResources.GatewayExtensions, *obj)
 		}
+
+		svc := addServiceAppProtocolIfConfigured(svcKey, gceServiceIR)
+		if svc != nil {
+			obj, err := i2gw.CastToUnstructured(svc)
+			if err != nil {
+				notify(notifications.ErrorNotification, "Failed to cast Service to unstructured", svc)
+				continue
+			}
+
+			// Clean up targetPort if 0 to avoid overwriting existing configuration
+			if spec, ok := obj.Object["spec"].(map[string]interface{}); ok {
+				if ports, ok := spec["ports"].([]interface{}); ok {
+					for _, p := range ports {
+						if portMap, ok := p.(map[string]interface{}); ok {
+							if tp, ok := portMap["targetPort"]; ok {
+								if tpInt, ok := tp.(int64); ok && tpInt == 0 {
+									delete(portMap, "targetPort")
+								}
+							}
+						}
+					}
+				}
+			}
+
+			gatewayResources.GatewayExtensions = append(gatewayResources.GatewayExtensions, *obj)
+		}
 	}
 }
 
-func addGCPBackendPolicyIfConfigured(serviceNamespacedName types.NamespacedName, gceServiceIR gce.ServiceIR) *gkegatewayv1.GCPBackendPolicy {
-	// If there is no specification related to GCPBackendPolicy feature, return nil.
-	if gceServiceIR.SessionAffinity == nil && gceServiceIR.SecurityPolicy == nil {
+func addServiceAppProtocolIfConfigured(serviceNamespacedName types.NamespacedName, serviceIR gce.ServiceIR) *corev1.Service {
+	if serviceIR.AppProtocol == nil || len(serviceIR.ServicePorts) == 0 {
 		return nil
 	}
 
-	gcpBackendPolicy := gkegatewayv1.GCPBackendPolicy{
+	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: serviceNamespacedName.Namespace,
 			Name:      serviceNamespacedName.Name,
+			Namespace: serviceNamespacedName.Namespace,
 		},
-		Spec: gkegatewayv1.GCPBackendPolicySpec{
-			Default: &gkegatewayv1.GCPBackendPolicyConfig{},
-			TargetRef: gatewayv1alpha2.NamespacedPolicyTargetReference{
-				Group: "",
-				Kind:  "Service",
-				Name:  gatewayv1.ObjectName(serviceNamespacedName.Name),
-			},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{},
 		},
 	}
-	gcpBackendPolicy.SetGroupVersionKind(GCPBackendPolicyGVK)
+	svc.SetGroupVersionKind(schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Service"})
 
-	if gceServiceIR.SessionAffinity != nil {
-		gcpBackendPolicy.Spec.Default.SessionAffinity = BuildGCPBackendPolicySessionAffinityConfig(gceServiceIR)
-	}
-	if gceServiceIR.SecurityPolicy != nil {
-		gcpBackendPolicy.Spec.Default.SecurityPolicy = BuildGCPBackendPolicySecurityPolicyConfig(gceServiceIR)
+	if *serviceIR.AppProtocol != "" {
+		if svc.Annotations == nil {
+			svc.Annotations = make(map[string]string)
+		}
+		// Construct JSON for cloud.google.com/app-protocols
+		appProtocols := "{"
+		first := true
+		for _, port := range serviceIR.ServicePorts {
+			if !first {
+				appProtocols += ","
+			}
+			appProtocols += fmt.Sprintf("\"%d\":\"%s\"", port, *serviceIR.AppProtocol)
+			first = false
+		}
+		appProtocols += "}"
+		svc.Annotations["cloud.google.com/app-protocols"] = appProtocols
 	}
 
-	return &gcpBackendPolicy
+	for name, port := range serviceIR.ServicePorts {
+		svc.Spec.Ports = append(svc.Spec.Ports, corev1.ServicePort{
+			Name:        name,
+			Port:        port,
+			AppProtocol: serviceIR.AppProtocol,
+		})
+	}
+	return svc
 }
 
 func addHealthCheckPolicyIfConfigured(serviceNamespacedName types.NamespacedName, gceServiceIR *gce.ServiceIR) *gkegatewayv1.HealthCheckPolicy {
@@ -186,7 +215,6 @@ func addHealthCheckPolicyIfConfigured(serviceNamespacedName types.NamespacedName
 			Name:      serviceNamespacedName.Name,
 		},
 		Spec: gkegatewayv1.HealthCheckPolicySpec{
-			Default: BuildHealthCheckPolicyConfig(gceServiceIR),
 			TargetRef: gatewayv1alpha2.NamespacedPolicyTargetReference{
 				Group: "",
 				Kind:  "Service",
@@ -194,6 +222,26 @@ func addHealthCheckPolicyIfConfigured(serviceNamespacedName types.NamespacedName
 			},
 		},
 	}
+	
+	if gceServiceIR.HealthCheck.Type != nil {
+		t := *gceServiceIR.HealthCheck.Type
+		if t == "HTTP2" {
+			healthCheckPolicy.Spec.Default = &gkegatewayv1.HealthCheckPolicyConfig{
+				Config: &gkegatewayv1.HealthCheck{
+					Type: gkegatewayv1.HTTP2,
+					HTTP2: &gkegatewayv1.HTTP2HealthCheck{},
+				},
+			}
+		} else if t == "HTTPS" {
+			healthCheckPolicy.Spec.Default = &gkegatewayv1.HealthCheckPolicyConfig{
+				Config: &gkegatewayv1.HealthCheck{
+					Type: gkegatewayv1.HTTPS,
+					HTTPS: &gkegatewayv1.HTTPSHealthCheck{},
+				},
+			}
+		}
+	}
+
 	healthCheckPolicy.SetGroupVersionKind(HealthCheckPolicyGVK)
 	return &healthCheckPolicy
 }

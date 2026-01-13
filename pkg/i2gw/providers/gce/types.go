@@ -16,7 +16,9 @@ limitations under the License.
 
 package gce
 
-import "k8s.io/apimachinery/pkg/runtime/schema"
+import (
+	"k8s.io/apimachinery/pkg/runtime/schema"
+)
 
 const (
 	gceIngressClass      = "gce"

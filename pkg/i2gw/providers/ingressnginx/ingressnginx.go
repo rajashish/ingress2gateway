@@ -30,6 +30,7 @@ import (
 const Name = "ingress-nginx"
 const NginxIngressClass = "nginx"
 const NginxIngressClassFlag = "ingress-class"
+const OutputToFlag = "output-to"
 
 func init() {
 	i2gw.ProviderConstructorByName[Name] = NewProvider
@@ -38,6 +39,11 @@ func init() {
 		Description:  "The name of the ingress class to select. Defaults to 'nginx'",
 		DefaultValue: NginxIngressClass,
 	})
+	i2gw.RegisterProviderSpecificFlag(Name, i2gw.ProviderSpecificFlag{
+		Name:         "output-to",
+		Description:  "The target implementation to generate resources for. Options: 'gateway-api' (default), 'gce'.",
+		DefaultValue: "gateway-api",
+	})
 }
 
 // Provider implements the i2gw.Provider interface.
@@ -45,18 +51,26 @@ type Provider struct {
 	storage                *storage
 	resourceReader         *resourceReader
 	resourcesToIRConverter *resourcesToIRConverter
+	outputTo               string
 }
 
 // NewProvider constructs and returns the ingress-nginx implementation of i2gw.Provider.
 func NewProvider(conf *i2gw.ProviderConf) i2gw.Provider {
+	outputTo := "gateway-api"
+	if flags, ok := conf.ProviderSpecificFlags[Name]; ok {
+		if val, ok := flags[OutputToFlag]; ok {
+			outputTo = val
+		}
+	}
 	return &Provider{
 		storage:                newResourcesStorage(),
 		resourceReader:         newResourceReader(conf),
-		resourcesToIRConverter: newResourcesToIRConverter(),
+		resourcesToIRConverter: newResourcesToIRConverter(outputTo),
+		outputTo:               outputTo,
 	}
 }
 
-// ToIR converts stored Ingress-Nginx API entities to emitterir.IR
+// ToIR converts stored Ingress-Nginx API entities to emitterir.EmitterIR
 // including the ingress-nginx specific features.
 func (p *Provider) ToIR() (emitterir.EmitterIR, field.ErrorList) {
 	ir, errs := p.resourcesToIRConverter.convert(p.storage)
