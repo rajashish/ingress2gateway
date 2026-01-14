@@ -30,4 +30,11 @@ const (
 	UpstreamVhostAnnotation         = "nginx.ingress.kubernetes.io/upstream-vhost"
 	ConnectionProxyHeaderAnnotation = "nginx.ingress.kubernetes.io/connection-proxy-header"
 	CustomHeadersAnnotation         = "nginx.ingress.kubernetes.io/custom-headers"
+
+	// Affinity annotations
+	AffinityAnnotation             = "nginx.ingress.kubernetes.io/affinity"
+	AffinityModeAnnotation         = "nginx.ingress.kubernetes.io/affinity-mode"
+	SessionCookieNameAnnotation    = "nginx.ingress.kubernetes.io/session-cookie-name"
+	SessionCookieHashAnnotation    = "nginx.ingress.kubernetes.io/session-cookie-hash"
+	SessionCookieExpiresAnnotation = "nginx.ingress.kubernetes.io/session-cookie-expires"
 )

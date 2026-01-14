@@ -25,9 +25,10 @@ type SslPolicyConfig struct {
 }
 type HTTPRouteIR struct{}
 type ServiceIR struct {
-	SessionAffinity *SessionAffinityConfig
-	SecurityPolicy  *SecurityPolicyConfig
-	HealthCheck     *HealthCheckConfig
+	SessionAffinity  *SessionAffinityConfig
+	SecurityPolicy   *SecurityPolicyConfig
+	HealthCheck      *HealthCheckConfig
+	LocalityLbPolicy *string
 }
 type SessionAffinityConfig struct {
 	AffinityType string
