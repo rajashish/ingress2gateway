@@ -24,6 +24,7 @@ import (
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitters/utils"
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/notifications"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -124,6 +125,11 @@ func buildGceServiceExtensions(ir emitterir.EmitterIR, gatewayResources *i2gw.Ga
 				notify(notifications.ErrorNotification, "Failed to cast GCPBackendPolicy to unstructured", bePolicy)
 				continue
 			}
+			if gceServiceIR.LocalityLbPolicy != nil {
+				if err := unstructured.SetNestedField(obj.Object, *gceServiceIR.LocalityLbPolicy, "spec", "default", "localityLbPolicy"); err != nil {
+					notify(notifications.ErrorNotification, "Failed to set localityLbPolicy", bePolicy)
+				}
+			}
 			gatewayResources.GatewayExtensions = append(gatewayResources.GatewayExtensions, *obj)
 		}
 
@@ -141,7 +147,7 @@ func buildGceServiceExtensions(ir emitterir.EmitterIR, gatewayResources *i2gw.Ga
 
 func addGCPBackendPolicyIfConfigured(serviceNamespacedName types.NamespacedName, gceServiceIR gce.ServiceIR) *gkegatewayv1.GCPBackendPolicy {
 	// If there is no specification related to GCPBackendPolicy feature, return nil.
-	if gceServiceIR.SessionAffinity == nil && gceServiceIR.SecurityPolicy == nil {
+	if gceServiceIR.SessionAffinity == nil && gceServiceIR.SecurityPolicy == nil && gceServiceIR.LocalityLbPolicy == nil {
 		return nil
 	}
 

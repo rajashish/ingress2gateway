@@ -18,6 +18,7 @@ package providerir
 
 import (
 	emitterir "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitter_intermediate"
+	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitter_intermediate/gce"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -35,7 +36,10 @@ func ToEmitterIR(pIR ProviderIR) emitterir.EmitterIR {
 	}
 
 	for k, v := range pIR.Gateways {
-		eIR.Gateways[k] = emitterir.GatewayContext{Gateway: v.Gateway}
+		eIR.Gateways[k] = emitterir.GatewayContext{
+			Gateway: v.Gateway,
+			Gce:     v.ProviderSpecificIR.Gce,
+		}
 	}
 	for k, v := range pIR.HTTPRoutes {
 		eIR.HTTPRoutes[k] = emitterir.HTTPRouteContext{HTTPRoute: v.HTTPRoute}
@@ -60,6 +64,13 @@ func ToEmitterIR(pIR ProviderIR) emitterir.EmitterIR {
 	}
 	for k, v := range pIR.ReferenceGrants {
 		eIR.ReferenceGrants[k] = emitterir.ReferenceGrantContext{ReferenceGrant: v}
+	}
+
+	eIR.GceServices = make(map[types.NamespacedName]gce.ServiceIR)
+	for k, v := range pIR.Services {
+		if v.Gce != nil {
+			eIR.GceServices[k] = *v.Gce
+		}
 	}
 
 	return eIR
