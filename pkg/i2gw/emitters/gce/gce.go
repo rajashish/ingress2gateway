@@ -147,7 +147,7 @@ func buildGceServiceExtensions(ir emitterir.EmitterIR, gatewayResources *i2gw.Ga
 
 func addGCPBackendPolicyIfConfigured(serviceNamespacedName types.NamespacedName, gceServiceIR gce.ServiceIR) *gkegatewayv1.GCPBackendPolicy {
 	// If there is no specification related to GCPBackendPolicy feature, return nil.
-	if gceServiceIR.SessionAffinity == nil && gceServiceIR.SecurityPolicy == nil && gceServiceIR.LocalityLbPolicy == nil {
+	if gceServiceIR.SessionAffinity == nil && gceServiceIR.SecurityPolicy == nil && gceServiceIR.LocalityLbPolicy == nil && gceServiceIR.IAP == nil {
 		return nil
 	}
 
@@ -172,6 +172,9 @@ func addGCPBackendPolicyIfConfigured(serviceNamespacedName types.NamespacedName,
 	}
 	if gceServiceIR.SecurityPolicy != nil {
 		gcpBackendPolicy.Spec.Default.SecurityPolicy = BuildGCPBackendPolicySecurityPolicyConfig(gceServiceIR)
+	}
+	if gceServiceIR.IAP != nil {
+		gcpBackendPolicy.Spec.Default.IAP = BuildGCPBackendPolicyIAPConfig(gceServiceIR)
 	}
 
 	return &gcpBackendPolicy

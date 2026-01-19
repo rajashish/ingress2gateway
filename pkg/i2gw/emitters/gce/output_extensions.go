@@ -38,6 +38,24 @@ func BuildGCPBackendPolicySecurityPolicyConfig(gceServiceIR gce.ServiceIR) *stri
 	return &securityPolicy
 }
 
+func BuildGCPBackendPolicyIAPConfig(gceServiceIR gce.ServiceIR) *gkegatewayv1.IdentityAwareProxyConfig {
+	if gceServiceIR.IAP == nil {
+		return nil
+	}
+	iapConfig := &gkegatewayv1.IdentityAwareProxyConfig{
+		Enabled: &gceServiceIR.IAP.Enabled,
+	}
+	if gceServiceIR.IAP.OAuth2ClientSecret != nil {
+		iapConfig.Oauth2ClientSecret = &gkegatewayv1.Oauth2ClientSecret{
+			Name: &gceServiceIR.IAP.OAuth2ClientSecret.Name,
+		}
+	}
+	if gceServiceIR.IAP.ClientID != nil {
+		iapConfig.ClientID = gceServiceIR.IAP.ClientID
+	}
+	return iapConfig
+}
+
 func BuildGCPGatewayPolicySecurityPolicyConfig(gatewayIR *emitterir.GatewayContext) string {
 	return gatewayIR.Gce.SslPolicy.Name
 }

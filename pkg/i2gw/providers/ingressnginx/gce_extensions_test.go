@@ -202,3 +202,210 @@ func TestProcessSessionAffinity(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessSecurityPolicy(t *testing.T) {
+	testCases := []struct {
+		name           string
+		ingress        networkingv1.Ingress
+		expectedSvcIRs map[types.NamespacedName]providerir.ProviderSpecificServiceIR
+	}{
+		{
+			name: "whitelist source range",
+			ingress: networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+					Annotations: map[string]string{
+						WhitelistSourceRangeAnnotation: "10.0.0.0/24",
+					},
+				},
+				Spec: networkingv1.IngressSpec{
+					Rules: []networkingv1.IngressRule{
+						{
+							IngressRuleValue: networkingv1.IngressRuleValue{
+								HTTP: &networkingv1.HTTPIngressRuleValue{
+									Paths: []networkingv1.HTTPIngressPath{
+										{
+											Backend: networkingv1.IngressBackend{
+												Service: &networkingv1.IngressServiceBackend{
+													Name: "svc1",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedSvcIRs: map[types.NamespacedName]providerir.ProviderSpecificServiceIR{
+				{Namespace: "default", Name: "svc1"}: {
+					Gce: &gce.ServiceIR{
+						SecurityPolicy: &gce.SecurityPolicyConfig{
+							Name: "whitelist-svc1",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "limit rps",
+			ingress: networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+					Annotations: map[string]string{
+						LimitRPSAnnotation: "10",
+					},
+				},
+				Spec: networkingv1.IngressSpec{
+					Rules: []networkingv1.IngressRule{
+						{
+							IngressRuleValue: networkingv1.IngressRuleValue{
+								HTTP: &networkingv1.HTTPIngressRuleValue{
+									Paths: []networkingv1.HTTPIngressPath{
+										{
+											Backend: networkingv1.IngressBackend{
+												Service: &networkingv1.IngressServiceBackend{
+													Name: "svc1",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedSvcIRs: map[types.NamespacedName]providerir.ProviderSpecificServiceIR{
+				{Namespace: "default", Name: "svc1"}: {
+					Gce: &gce.ServiceIR{
+						SecurityPolicy: &gce.SecurityPolicyConfig{
+							Name: "manual-cloud-armor-policy-required-ratelimit",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ir := &providerir.ProviderIR{
+				Services: make(map[types.NamespacedName]providerir.ProviderSpecificServiceIR),
+			}
+			processSecurityPolicy(tc.ingress, ir)
+
+			if diff := cmp.Diff(tc.expectedSvcIRs, ir.Services); diff != "" {
+				t.Errorf("processSecurityPolicy() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestProcessIAP(t *testing.T) {
+	testCases := []struct {
+		name           string
+		ingress        networkingv1.Ingress
+		expectedSvcIRs map[types.NamespacedName]providerir.ProviderSpecificServiceIR
+	}{
+		{
+			name: "auth secret",
+			ingress: networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+					Annotations: map[string]string{
+						AuthSecretAnnotation: "my-secret",
+					},
+				},
+				Spec: networkingv1.IngressSpec{
+					Rules: []networkingv1.IngressRule{
+						{
+							IngressRuleValue: networkingv1.IngressRuleValue{
+								HTTP: &networkingv1.HTTPIngressRuleValue{
+									Paths: []networkingv1.HTTPIngressPath{
+										{
+											Backend: networkingv1.IngressBackend{
+												Service: &networkingv1.IngressServiceBackend{
+													Name: "svc1",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedSvcIRs: map[types.NamespacedName]providerir.ProviderSpecificServiceIR{
+				{Namespace: "default", Name: "svc1"}: {
+					Gce: &gce.ServiceIR{
+						IAP: &gce.IAPConfig{
+							Enabled: true,
+							OAuth2ClientSecret: &gce.OAuth2ClientSecret{
+									Name: "my-secret",
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "enable global auth",
+			ingress: networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+					Annotations: map[string]string{
+						EnableGlobalAuthAnnotation: "true",
+					},
+				},
+				Spec: networkingv1.IngressSpec{
+					Rules: []networkingv1.IngressRule{
+						{
+							IngressRuleValue: networkingv1.IngressRuleValue{
+								HTTP: &networkingv1.HTTPIngressRuleValue{
+									Paths: []networkingv1.HTTPIngressPath{
+										{
+											Backend: networkingv1.IngressBackend{
+												Service: &networkingv1.IngressServiceBackend{
+													Name: "svc1",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedSvcIRs: map[types.NamespacedName]providerir.ProviderSpecificServiceIR{
+				{Namespace: "default", Name: "svc1"}: {
+					Gce: &gce.ServiceIR{
+						IAP: &gce.IAPConfig{
+							Enabled: true,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ir := &providerir.ProviderIR{
+				Services: make(map[types.NamespacedName]providerir.ProviderSpecificServiceIR),
+			}
+			processIAP(tc.ingress, ir)
+
+			if diff := cmp.Diff(tc.expectedSvcIRs, ir.Services); diff != "" {
+				t.Errorf("processIAP() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

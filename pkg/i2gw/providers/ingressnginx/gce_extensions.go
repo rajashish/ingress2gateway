@@ -31,6 +31,8 @@ func gceFeature(ingresses []networkingv1.Ingress, _ map[types.NamespacedName]map
 
 	for _, ingress := range ingresses {
 		processSessionAffinity(ingress, ir)
+		processSecurityPolicy(ingress, ir)
+		processIAP(ingress, ir)
 	}
 
 	return errs
@@ -76,6 +78,121 @@ func processSessionAffinity(ingress networkingv1.Ingress, ir *providerir.Provide
 		if localityLbPolicy != nil {
 			svcIR.Gce.LocalityLbPolicy = localityLbPolicy
 		}
+		ir.Services[svcName] = svcIR
+	}
+
+	if ingress.Spec.DefaultBackend != nil && ingress.Spec.DefaultBackend.Service != nil {
+		updateService(types.NamespacedName{
+			Namespace: ingress.Namespace,
+			Name:      ingress.Spec.DefaultBackend.Service.Name,
+		})
+	}
+
+	for _, rule := range ingress.Spec.Rules {
+		if rule.HTTP == nil {
+			continue
+		}
+		for _, path := range rule.HTTP.Paths {
+			if path.Backend.Service != nil {
+				updateService(types.NamespacedName{
+					Namespace: ingress.Namespace,
+					Name:      path.Backend.Service.Name,
+				})
+			}
+		}
+	}
+}
+
+func processSecurityPolicy(ingress networkingv1.Ingress, ir *providerir.ProviderIR) {
+	var policyName string
+	if _, ok := ingress.Annotations[LimitRPSAnnotation]; ok {
+		policyName = "manual-cloud-armor-policy-required-ratelimit"
+	}
+
+	// Whitelist annotation implies a specific naming convention if not overridden by limit-rps (or maybe they coexist? GKE BackendPolicy only allows one SecurityPolicy).
+	// Assuming limit-rps takes precedence or they are mutually exclusive in usage for this tool.
+	// If limit-rps is NOT present, check whitelist.
+	if policyName == "" {
+		if _, ok := ingress.Annotations[WhitelistSourceRangeAnnotation]; !ok {
+			return
+		}
+	}
+
+	updateService := func(svcName types.NamespacedName) {
+		if ir.Services == nil {
+			ir.Services = make(map[types.NamespacedName]providerir.ProviderSpecificServiceIR)
+		}
+		svcIR, ok := ir.Services[svcName]
+		if !ok {
+			svcIR = providerir.ProviderSpecificServiceIR{}
+		}
+		if svcIR.Gce == nil {
+			svcIR.Gce = &gce.ServiceIR{}
+		}
+
+		finalPolicyName := policyName
+		if finalPolicyName == "" {
+			finalPolicyName = "whitelist-" + svcName.Name
+		}
+
+		svcIR.Gce.SecurityPolicy = &gce.SecurityPolicyConfig{
+			Name: finalPolicyName,
+		}
+		ir.Services[svcName] = svcIR
+	}
+
+	if ingress.Spec.DefaultBackend != nil && ingress.Spec.DefaultBackend.Service != nil {
+		updateService(types.NamespacedName{
+			Namespace: ingress.Namespace,
+			Name:      ingress.Spec.DefaultBackend.Service.Name,
+		})
+	}
+
+	for _, rule := range ingress.Spec.Rules {
+		if rule.HTTP == nil {
+			continue
+		}
+		for _, path := range rule.HTTP.Paths {
+			if path.Backend.Service != nil {
+				updateService(types.NamespacedName{
+					Namespace: ingress.Namespace,
+					Name:      path.Backend.Service.Name,
+				})
+			}
+		}
+	}
+}
+
+func processIAP(ingress networkingv1.Ingress, ir *providerir.ProviderIR) {
+	authSecret, hasSecret := ingress.Annotations[AuthSecretAnnotation]
+	enableAuth, hasEnable := ingress.Annotations[EnableGlobalAuthAnnotation]
+
+	if !hasSecret && (!hasEnable || enableAuth != "true") {
+		return
+	}
+
+	updateService := func(svcName types.NamespacedName) {
+		if ir.Services == nil {
+			ir.Services = make(map[types.NamespacedName]providerir.ProviderSpecificServiceIR)
+		}
+		svcIR, ok := ir.Services[svcName]
+		if !ok {
+			svcIR = providerir.ProviderSpecificServiceIR{}
+		}
+		if svcIR.Gce == nil {
+			svcIR.Gce = &gce.ServiceIR{}
+		}
+
+		iapConfig := &gce.IAPConfig{
+			Enabled: true,
+		}
+		if hasSecret {
+			iapConfig.OAuth2ClientSecret = &gce.OAuth2ClientSecret{
+				Name: authSecret,
+			}
+		}
+
+		svcIR.Gce.IAP = iapConfig
 		ir.Services[svcName] = svcIR
 	}
 

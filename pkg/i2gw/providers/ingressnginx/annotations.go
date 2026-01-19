@@ -37,4 +37,12 @@ const (
 	SessionCookieNameAnnotation    = "nginx.ingress.kubernetes.io/session-cookie-name"
 	SessionCookieHashAnnotation    = "nginx.ingress.kubernetes.io/session-cookie-hash"
 	SessionCookieExpiresAnnotation = "nginx.ingress.kubernetes.io/session-cookie-expires"
+
+	// Security annotations
+	WhitelistSourceRangeAnnotation = "nginx.ingress.kubernetes.io/whitelist-source-range"
+	LimitRPSAnnotation             = "nginx.ingress.kubernetes.io/limit-rps"
+
+	// Auth annotations
+	EnableGlobalAuthAnnotation = "nginx.ingress.kubernetes.io/enable-global-auth"
+	AuthSecretAnnotation       = "nginx.ingress.kubernetes.io/auth-secret"
 )

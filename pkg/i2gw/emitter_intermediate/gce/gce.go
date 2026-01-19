@@ -29,12 +29,21 @@ type ServiceIR struct {
 	SecurityPolicy   *SecurityPolicyConfig
 	HealthCheck      *HealthCheckConfig
 	LocalityLbPolicy *string
+	IAP              *IAPConfig
 }
 type SessionAffinityConfig struct {
 	AffinityType string
 	CookieTTLSec *int64
 }
 type SecurityPolicyConfig struct {
+	Name string
+}
+type IAPConfig struct {
+	Enabled            bool
+	OAuth2ClientSecret *OAuth2ClientSecret
+	ClientID           *string
+}
+type OAuth2ClientSecret struct {
 	Name string
 }
 type HealthCheckConfig struct {
