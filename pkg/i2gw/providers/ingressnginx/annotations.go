@@ -49,4 +49,8 @@ const (
 	// SSL Redirect annotations
 	SSLRedirectAnnotation      = "nginx.ingress.kubernetes.io/ssl-redirect"
 	ForceSSLRedirectAnnotation = "nginx.ingress.kubernetes.io/force-ssl-redirect"
+
+	// Timeout annotations
+	ProxyReadTimeoutAnnotation = "nginx.ingress.kubernetes.io/proxy-read-timeout"
+	ProxySendTimeoutAnnotation = "nginx.ingress.kubernetes.io/proxy-send-timeout"
 )

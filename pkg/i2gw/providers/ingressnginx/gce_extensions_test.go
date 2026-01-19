@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 func TestProcessSessionAffinity(t *testing.T) {
@@ -408,4 +409,84 @@ func TestProcessIAP(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProcessTimeouts(t *testing.T) {
+	testCases := []struct {
+		name             string
+		ingress          networkingv1.Ingress
+		expectedTimeouts map[types.NamespacedName]*gatewayv1.HTTPRouteTimeouts
+	}{
+		{
+			name: "read timeout",
+			ingress: networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+					Annotations: map[string]string{
+						ProxyReadTimeoutAnnotation: "120",
+					},
+				},
+			},
+			expectedTimeouts: map[types.NamespacedName]*gatewayv1.HTTPRouteTimeouts{
+				{Namespace: "default", Name: "route1"}: {
+					BackendRequest: ptrToDuration("2m0s"),
+				},
+			},
+		},
+		{
+			name: "send timeout",
+			ingress: networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+					Annotations: map[string]string{
+						ProxySendTimeoutAnnotation: "60s",
+					},
+				},
+			},
+			expectedTimeouts: map[types.NamespacedName]*gatewayv1.HTTPRouteTimeouts{
+				{Namespace: "default", Name: "route1"}: {
+					BackendRequest: ptrToDuration("1m0s"),
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Mock IR with a route derived from this ingress
+			ir := &providerir.ProviderIR{
+				HTTPRoutes: map[types.NamespacedName]providerir.HTTPRouteContext{
+					{Namespace: "default", Name: "route1"}: {
+						HTTPRoute: gatewayv1.HTTPRoute{
+							Spec: gatewayv1.HTTPRouteSpec{
+								Rules: []gatewayv1.HTTPRouteRule{{}},
+							},
+						},
+						RuleBackendSources: [][]providerir.BackendSource{
+							{
+								{Ingress: &tc.ingress},
+							},
+						},
+					},
+				},
+			}
+
+			processTimeouts(tc.ingress, ir)
+
+			route := ir.HTTPRoutes[types.NamespacedName{Namespace: "default", Name: "route1"}]
+			got := route.HTTPRoute.Spec.Rules[0].Timeouts
+			want := tc.expectedTimeouts[types.NamespacedName{Namespace: "default", Name: "route1"}]
+
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("processTimeouts() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func ptrToDuration(s string) *gatewayv1.Duration {
+	d := gatewayv1.Duration(s)
+	return &d
 }

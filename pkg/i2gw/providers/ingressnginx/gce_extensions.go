@@ -19,11 +19,14 @@ package ingressnginx
 import (
 	"strconv"
 
+	"time"
+
 	"github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/emitter_intermediate/gce"
 	providerir "github.com/kubernetes-sigs/ingress2gateway/pkg/i2gw/provider_intermediate"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 func gceFeature(ingresses []networkingv1.Ingress, _ map[types.NamespacedName]map[string]int32, ir *providerir.ProviderIR) field.ErrorList {
@@ -34,6 +37,7 @@ func gceFeature(ingresses []networkingv1.Ingress, _ map[types.NamespacedName]map
 		processSecurityPolicy(ingress, ir)
 		processIAP(ingress, ir)
 		processSSLRedirect(ingress, ir)
+		processTimeouts(ingress, ir)
 	}
 
 	return errs
@@ -243,5 +247,65 @@ func processSSLRedirect(ingress networkingv1.Ingress, ir *providerir.ProviderIR)
 		}
 		gwCtx.ProviderSpecificIR.Gce.EnableHTTPSRedirect = true
 		ir.Gateways[gwName] = gwCtx
+	}
+}
+
+func processTimeouts(ingress networkingv1.Ingress, ir *providerir.ProviderIR) {
+	readTimeout, hasRead := ingress.Annotations[ProxyReadTimeoutAnnotation]
+	sendTimeout, hasSend := ingress.Annotations[ProxySendTimeoutAnnotation]
+
+	if !hasRead && !hasSend {
+		return
+	}
+
+	var timeoutVal string
+	if hasRead {
+		timeoutVal = readTimeout
+	} else {
+		timeoutVal = sendTimeout
+	}
+
+	// Parse timeout
+	// Nginx timeout is in seconds by default if no unit.
+	// Gateway API expects Duration format (e.g. "1h", "1m", "1s").
+
+	// Check if it has unit
+	// Simple check: if it's just digits, append "s"
+	isDigits := true
+	for _, c := range timeoutVal {
+		if c < '0' || c > '9' {
+			isDigits = false
+			break
+		}
+	}
+	if isDigits {
+		timeoutVal += "s"
+	}
+
+	duration, err := time.ParseDuration(timeoutVal)
+	if err != nil {
+		return // Ignore invalid duration
+	}
+	gwDuration := gatewayv1.Duration(duration.String())
+
+	// Apply to all HTTPRoutes derived from this Ingress
+	for key, routeCtx := range ir.HTTPRoutes {
+		modified := false
+		for i, ruleSources := range routeCtx.RuleBackendSources {
+			for _, source := range ruleSources {
+				if source.Ingress != nil && source.Ingress.Name == ingress.Name && source.Ingress.Namespace == ingress.Namespace {
+					// Found a rule derived from this Ingress
+					if routeCtx.HTTPRoute.Spec.Rules[i].Timeouts == nil {
+						routeCtx.HTTPRoute.Spec.Rules[i].Timeouts = &gatewayv1.HTTPRouteTimeouts{}
+					}
+					routeCtx.HTTPRoute.Spec.Rules[i].Timeouts.BackendRequest = &gwDuration
+					modified = true
+					break // Apply once per rule is enough
+				}
+			}
+		}
+		if modified {
+			ir.HTTPRoutes[key] = routeCtx
+		}
 	}
 }
