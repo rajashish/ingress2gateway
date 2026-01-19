@@ -33,6 +33,7 @@ func gceFeature(ingresses []networkingv1.Ingress, _ map[types.NamespacedName]map
 		processSessionAffinity(ingress, ir)
 		processSecurityPolicy(ingress, ir)
 		processIAP(ingress, ir)
+		processSSLRedirect(ingress, ir)
 	}
 
 	return errs
@@ -215,5 +216,32 @@ func processIAP(ingress networkingv1.Ingress, ir *providerir.ProviderIR) {
 				})
 			}
 		}
+	}
+}
+
+func processSSLRedirect(ingress networkingv1.Ingress, ir *providerir.ProviderIR) {
+	sslRedirect, _ := ingress.Annotations[SSLRedirectAnnotation]
+	forceSSLRedirect, _ := ingress.Annotations[ForceSSLRedirectAnnotation]
+
+	if sslRedirect != "true" && forceSSLRedirect != "true" {
+		return
+	}
+
+	ingressClass := "nginx"
+	if ingress.Spec.IngressClassName != nil {
+		ingressClass = *ingress.Spec.IngressClassName
+	}
+
+	gwName := types.NamespacedName{
+		Namespace: ingress.Namespace,
+		Name:      ingressClass,
+	}
+
+	if gwCtx, ok := ir.Gateways[gwName]; ok {
+		if gwCtx.ProviderSpecificIR.Gce == nil {
+			gwCtx.ProviderSpecificIR.Gce = &gce.GatewayIR{}
+		}
+		gwCtx.ProviderSpecificIR.Gce.EnableHTTPSRedirect = true
+		ir.Gateways[gwName] = gwCtx
 	}
 }

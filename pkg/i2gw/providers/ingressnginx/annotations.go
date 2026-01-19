@@ -45,4 +45,8 @@ const (
 	// Auth annotations
 	EnableGlobalAuthAnnotation = "nginx.ingress.kubernetes.io/enable-global-auth"
 	AuthSecretAnnotation       = "nginx.ingress.kubernetes.io/auth-secret"
+
+	// SSL Redirect annotations
+	SSLRedirectAnnotation      = "nginx.ingress.kubernetes.io/ssl-redirect"
+	ForceSSLRedirectAnnotation = "nginx.ingress.kubernetes.io/force-ssl-redirect"
 )

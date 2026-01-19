@@ -69,7 +69,76 @@ func (c *Emitter) Emit(ir emitterir.EmitterIR) (i2gw.GatewayResources, field.Err
 	}
 	buildGceGatewayExtensions(ir, &gatewayResources)
 	buildGceServiceExtensions(ir, &gatewayResources)
+	buildGceHTTPRouteExtensions(ir, &gatewayResources)
 	return gatewayResources, nil
+}
+
+func buildGceHTTPRouteExtensions(ir emitterir.EmitterIR, gatewayResources *i2gw.GatewayResources) {
+	for _, gatewayContext := range ir.Gateways {
+		if gatewayContext.Gce != nil && gatewayContext.Gce.EnableHTTPSRedirect {
+			applyHTTPSRedirect(&gatewayContext, gatewayResources)
+		}
+	}
+}
+
+func applyHTTPSRedirect(gatewayContext *emitterir.GatewayContext, gatewayResources *i2gw.GatewayResources) {
+	newRoutes := make(map[types.NamespacedName]gatewayv1.HTTPRoute)
+
+	// Iterate over generated HTTPRoutes
+	for key, route := range gatewayResources.HTTPRoutes {
+		// Check if this route is attached to the Gateway we are interested in
+		for i, parentRef := range route.Spec.ParentRefs {
+			if string(parentRef.Name) == gatewayContext.Name && (parentRef.Namespace == nil || string(*parentRef.Namespace) == gatewayContext.Namespace) {
+				
+				// If port is nil (all listeners) or 80 (HTTP)
+				if parentRef.Port == nil || *parentRef.Port == 80 {
+					// 1. Create the redirect route for port 80
+					redirectRoute := route.DeepCopy()
+					redirectRoute.Name = route.Name + "-redirect"
+					
+					// Set parentRef to port 80 explicitly
+					redirectRoute.Spec.ParentRefs = []gatewayv1.ParentReference{
+						{
+							Group: parentRef.Group,
+							Kind:  parentRef.Kind,
+							Namespace: parentRef.Namespace,
+							Name:  parentRef.Name,
+							Port:  ptrTo(gatewayv1.PortNumber(80)),
+						},
+					}
+
+					redirectRoute.Spec.Rules = []gatewayv1.HTTPRouteRule{
+						{
+							Filters: []gatewayv1.HTTPRouteFilter{
+								{
+									Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+									RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+										Scheme:     ptrTo("https"),
+										StatusCode: ptrTo(301),
+										Port:       ptrTo(gatewayv1.PortNumber(443)),
+									},
+								},
+							},
+						},
+					}
+					newRoutes[types.NamespacedName{Namespace: redirectRoute.Namespace, Name: redirectRoute.Name}] = *redirectRoute
+
+					// 2. Modify the original route to be on port 443 only
+					// We need to modify the specific parentRef in the slice
+					route.Spec.ParentRefs[i].Port = ptrTo(gatewayv1.PortNumber(443))
+					gatewayResources.HTTPRoutes[key] = route
+				}
+			}
+		}
+	}
+
+	for k, v := range newRoutes {
+		gatewayResources.HTTPRoutes[k] = v
+	}
+}
+
+func ptrTo[T any](v T) *T {
+	return &v
 }
 
 func buildGceGatewayExtensions(ir emitterir.EmitterIR, gatewayResources *i2gw.GatewayResources) {
