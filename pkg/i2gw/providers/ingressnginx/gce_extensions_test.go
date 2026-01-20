@@ -486,6 +486,108 @@ func TestProcessTimeouts(t *testing.T) {
 	}
 }
 
+func TestProcessBackendProtocol(t *testing.T) {
+	testCases := []struct {
+		name           string
+		ingress        networkingv1.Ingress
+		expectedSvcIRs map[types.NamespacedName]providerir.ProviderSpecificServiceIR
+	}{
+		{
+			name: "backend protocol HTTPS",
+			ingress: networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+					Annotations: map[string]string{
+						BackendProtocolAnnotation: "HTTPS",
+					},
+				},
+				Spec: networkingv1.IngressSpec{
+					Rules: []networkingv1.IngressRule{
+						{
+							IngressRuleValue: networkingv1.IngressRuleValue{
+								HTTP: &networkingv1.HTTPIngressRuleValue{
+									Paths: []networkingv1.HTTPIngressPath{
+										{
+											Backend: networkingv1.IngressBackend{
+												Service: &networkingv1.IngressServiceBackend{
+													Name: "svc1",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedSvcIRs: map[types.NamespacedName]providerir.ProviderSpecificServiceIR{
+				{Namespace: "default", Name: "svc1"}: {
+					Gce: &gce.ServiceIR{
+						HealthCheck: &gce.HealthCheckConfig{
+							Type: ptr.To("HTTPS"),
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "backend protocol GRPC",
+			ingress: networkingv1.Ingress{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test",
+					Annotations: map[string]string{
+						BackendProtocolAnnotation: "GRPC",
+					},
+				},
+				Spec: networkingv1.IngressSpec{
+					Rules: []networkingv1.IngressRule{
+						{
+							IngressRuleValue: networkingv1.IngressRuleValue{
+								HTTP: &networkingv1.HTTPIngressRuleValue{
+									Paths: []networkingv1.HTTPIngressPath{
+										{
+											Backend: networkingv1.IngressBackend{
+												Service: &networkingv1.IngressServiceBackend{
+													Name: "svc1",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedSvcIRs: map[types.NamespacedName]providerir.ProviderSpecificServiceIR{
+				{Namespace: "default", Name: "svc1"}: {
+					Gce: &gce.ServiceIR{
+						HealthCheck: &gce.HealthCheckConfig{
+							Type: ptr.To("HTTP2"),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ir := &providerir.ProviderIR{
+				Services: make(map[types.NamespacedName]providerir.ProviderSpecificServiceIR),
+			}
+			processBackendProtocol(tc.ingress, ir)
+
+			if diff := cmp.Diff(tc.expectedSvcIRs, ir.Services); diff != "" {
+				t.Errorf("processBackendProtocol() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func ptrToDuration(s string) *gatewayv1.Duration {
 	d := gatewayv1.Duration(s)
 	return &d

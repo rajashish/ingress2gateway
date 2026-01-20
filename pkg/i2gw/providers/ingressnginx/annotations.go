@@ -53,4 +53,7 @@ const (
 	// Timeout annotations
 	ProxyReadTimeoutAnnotation = "nginx.ingress.kubernetes.io/proxy-read-timeout"
 	ProxySendTimeoutAnnotation = "nginx.ingress.kubernetes.io/proxy-send-timeout"
+
+	// Backend annotations
+	BackendProtocolAnnotation = "nginx.ingress.kubernetes.io/backend-protocol"
 )

@@ -38,6 +38,7 @@ func gceFeature(ingresses []networkingv1.Ingress, _ map[types.NamespacedName]map
 		processIAP(ingress, ir)
 		processSSLRedirect(ingress, ir)
 		processTimeouts(ingress, ir)
+		processBackendProtocol(ingress, ir)
 	}
 
 	return errs
@@ -306,6 +307,70 @@ func processTimeouts(ingress networkingv1.Ingress, ir *providerir.ProviderIR) {
 		}
 		if modified {
 			ir.HTTPRoutes[key] = routeCtx
+		}
+	}
+}
+
+func processBackendProtocol(ingress networkingv1.Ingress, ir *providerir.ProviderIR) {
+	protocol, ok := ingress.Annotations[BackendProtocolAnnotation]
+	if !ok {
+		return
+	}
+
+	// Map Nginx protocol to GKE protocol
+	// Nginx: HTTP, HTTPS, GRPC, GRPCS, AJP, FCGI
+	// GKE: HTTP, HTTPS, HTTP2
+	var gkeProtocol string
+	switch protocol {
+	case "HTTPS":
+		gkeProtocol = "HTTPS"
+	case "GRPC":
+		gkeProtocol = "HTTP2"
+	case "HTTP2":
+		gkeProtocol = "HTTP2"
+	default:
+		return // Ignore others or default to HTTP (which is default anyway)
+	}
+
+	updateService := func(svcName types.NamespacedName) {
+		if ir.Services == nil {
+			ir.Services = make(map[types.NamespacedName]providerir.ProviderSpecificServiceIR)
+		}
+		svcIR, ok := ir.Services[svcName]
+		if !ok {
+			svcIR = providerir.ProviderSpecificServiceIR{}
+		}
+		if svcIR.Gce == nil {
+			svcIR.Gce = &gce.ServiceIR{}
+		}
+
+		// Set HealthCheck config
+		if svcIR.Gce.HealthCheck == nil {
+			svcIR.Gce.HealthCheck = &gce.HealthCheckConfig{}
+		}
+		svcIR.Gce.HealthCheck.Type = &gkeProtocol
+		
+		ir.Services[svcName] = svcIR
+	}
+
+	if ingress.Spec.DefaultBackend != nil && ingress.Spec.DefaultBackend.Service != nil {
+		updateService(types.NamespacedName{
+			Namespace: ingress.Namespace,
+			Name:      ingress.Spec.DefaultBackend.Service.Name,
+		})
+	}
+
+	for _, rule := range ingress.Spec.Rules {
+		if rule.HTTP == nil {
+			continue
+		}
+		for _, path := range rule.HTTP.Paths {
+			if path.Backend.Service != nil {
+				updateService(types.NamespacedName{
+					Namespace: ingress.Namespace,
+					Name:      path.Backend.Service.Name,
+				})
+			}
 		}
 	}
 }
